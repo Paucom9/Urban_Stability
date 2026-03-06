@@ -26,14 +26,14 @@
 #                                                                              #
 #   Output:                                                                    #
 #   - Built-up surface dataset                                                 #
-#         output/data/bcn_built_up.csv                                         #
+#         output/data/built_up_bcn.csv                                         #
 #                                                                              #
 #   - Land cover diversity dataset                                             #
-#         output/data/bcn_land_diversity.csv                                   #
+#         output/data/land_diversity_bcn.csv                                   #
 #                                                                              #
 #   - Maps                                                                     #
-#         output/figures/bcn_urb_map.png                                       #
-#         output/figures/bcn_landcover_map.png                                 #
+#         output/figures/urb_map_bcn.png                                       #
+#         output/figures/landcover_map_bcn.png                                 #
 #                                                                              #
 #   *Note: Raw EBMS data are not publicly available in this repository.        #
 #   Access requires a signed data-sharing agreement with the                   #
@@ -41,6 +41,7 @@
 #   Data requests can be submitted through:                                    #
 #   https://butterfly-monitoring.net/                                          #
 # ============================================================================ #
+
 
 
 #1. Libraries ####
@@ -343,7 +344,7 @@ built_up_df <- results_df %>%
 
 write.csv(
   built_up_df,
-  file.path(output_dir,"data","bcn_built_up.csv"),
+  file.path(output_dir,"data","built_up_bcn.csv"),
   row.names=FALSE
 )
 
@@ -417,7 +418,7 @@ map_urb_bcn <- ggplot() +
   annotation_scale(location="bl")
 
 ggsave(
-  file.path(output_dir,"figures","bcn_urb_map.png"),
+  file.path(output_dir,"figures","urb_map_bcn.png"),
   map_urb_bcn,
   width=5.5,
   height=5,
@@ -476,7 +477,7 @@ map_lc_bcn <- ggplot() +
   annotation_scale(location="bl")
 
 ggsave(
-  file.path(output_dir,"figures","bcn_landcover_map.png"),
+  file.path(output_dir,"figures","landcover_map_bcn.png"),
   map_lc_bcn,
   width=5.5,
   height=5,
@@ -529,6 +530,6 @@ landdiv_df <- sites_buffer %>%
 
 write.csv(
   landdiv_df,
-  file.path(output_dir,"data","bcn_land_diversity.csv"),
+  file.path(output_dir,"data","land_diversity_bcn.csv"),
   row.names=FALSE
 )

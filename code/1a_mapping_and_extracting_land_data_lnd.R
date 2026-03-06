@@ -22,12 +22,12 @@
 #                                                                              #
 #   Output:                                                                    #
 #   - Built-up surface dataset:                                                #
-#         output/data/london_built_up.csv                                      #
+#         output/data/built_up_lnd.csv                                         #
 #   - Land cover diversity dataset:                                            #
-#         output/data/london_land_diversity.csv                                #
+#         output/data/land_diversity_lnd.csv                                   #
 #   - Maps:                                                                    #
-#         output/figures/london_urb_map.png                                    #
-#         output/figures/london_landcover_map.png                              #
+#         output/figures/urb_map_lnd.png                                       #
+#         output/figures/landcover_map_lnd.png                                 #
 #                                                                              #
 #   *Note: Raw EBMS data are not publicly available in this repository.        #
 #   Access requires a signed data-sharing agreement with the                   #
@@ -35,6 +35,7 @@
 #   Data requests can be submitted through:                                    #
 #   https://butterfly-monitoring.net/                                          #
 # ============================================================================ #
+
 
 
 #1. Libraries ####
@@ -205,6 +206,8 @@ results_df <- sites_buffer %>%
 
 buffers <- c(1000, 2000, 5000)
 
+na_counts <- numeric(length(buffers)) 
+
 for (i in seq_along(buffers)) {
   r <- buffers[i]
   
@@ -240,7 +243,7 @@ built_up_df <- results_df %>%
 
 write.csv(
   built_up_df,
-  file.path(output_dir, "data", "lnd_built_up.csv"),
+  file.path(output_dir, "data", "built_up_lnd.csv"),
   row.names = FALSE
 )
 
@@ -344,7 +347,7 @@ map_urb_lnd
 
 
 ggsave(
-  file.path(output_dir, "figures", "lnd_urb_map.png"),
+  file.path(output_dir, "figures", "urb_map_lnd.png"),
   map_urb_lnd,
   width = 5.5,
   height = 5,
@@ -494,7 +497,7 @@ landdiv_df <- sites_buffer %>%
 
 write.csv(
   landdiv_df,
-  file.path(output_dir, "data", "lnd_land_diversity.csv"),
+  file.path(output_dir, "data", "land_diversity_lnd.csv"),
   row.names = FALSE
 )
 

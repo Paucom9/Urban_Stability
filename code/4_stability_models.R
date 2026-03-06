@@ -12,17 +12,17 @@
 #   Input:                                                                     #
 #   - Diversity and stability metrics                                          #
 #         output/data/diversity_stability_bcn.csv                              #
-#         output/data/diversity_stability_london.csv                           #
-#         output/data/diversity_stability_randstad.csv                         #
+#         output/data/diversity_stability_lnd.csv                              #
+#         output/data/diversity_stability_rnd.csv                              #
 #                                                                              #
 #   - Landscape variables                                                      #
-#         output/data/barcelona_built_up.csv                                   #
-#         output/data/london_built_up.csv                                      #
-#         output/data/randstad_built_up.csv                                    #
+#         output/data/built_up_bcn.csv                                         #
+#         output/data/built_up_lnd.csv                                         #
+#         output/data/built_up_rnd.csv                                         #
 #                                                                              #
-#         output/data/barcelona_land_diversity.csv                             #
-#         output/data/london_land_diversity.csv                                #
-#         output/data/randstad_land_diversity.csv                              #
+#         output/data/land_diversity_bcn.csv                                   #
+#         output/data/land_diversity_lnd.csv                                   #
+#         output/data/land_diversity_rnd.csv                                   #
 #                                                                              #
 #   Output:                                                                    #
 #   - SEM path coefficients                                                    #
@@ -35,7 +35,6 @@
 
 
 #1. Libraries ####
-
 
 library(dplyr)
 library(tidyr)
@@ -53,8 +52,7 @@ library(here)
 
 #2. Define project folders ####
 
-
-input_dir  <- here("input")
+input_dir  <- here("input", "data")
 output_dir <- here("output")
 
 
@@ -68,17 +66,44 @@ ds <- list(
   ),
   
   LND = read.csv(
-    file.path(output_dir, "data", "diversity_stability_london.csv")
+    file.path(output_dir, "data", "diversity_stability_lnd.csv")
   ),
   
   RND = read.csv(
-    file.path(output_dir, "data", "diversity_stability_randstad.csv")
+    file.path(output_dir, "data", "diversity_stability_rnd.csv")
   )
 )
 
+# ---- Fix SITE_ID format ----
+
+clean_bcn_id <- function(x) {
+  
+  x <- as.character(x)
+  
+  # remove duplicated prefixes
+  x <- gsub("^ES-CTBMS\\.", "", x)
+  
+  # keep uBMS sites unchanged
+  x <- ifelse(
+    grepl("^ES_uBMS", x),
+    x,
+    paste0("ES-CTBMS.", x)
+  )
+  
+  x
+}
+
+ds$BCN <- ds$BCN %>%
+  mutate(SITE_ID = clean_bcn_id(SITE_ID))
+
+ds$LND <- ds$LND %>%
+  mutate(SITE_ID = as.character(SITE_ID))
+
+ds$RND <- ds$RND %>%
+  mutate(SITE_ID = as.character(SITE_ID))
+
 
 #4. Load and prepare landscape variables ####
-
 
 prep_landscape <- function(built, habdiv) {
   
@@ -96,28 +121,26 @@ prep_landscape <- function(built, habdiv) {
     )
 }
 
-
 landscape <- list(
   
   BCN = prep_landscape(
-    read.csv(file.path(output_dir,"data","barcelona_built_up.csv")),
-    read.csv(file.path(output_dir,"data","barcelona_land_diversity.csv"))
+    read.csv(file.path(output_dir,"data","built_up_bcn.csv")),
+    read.csv(file.path(output_dir,"data","land_diversity_bcn.csv"))
   ),
   
   LND = prep_landscape(
-    read.csv(file.path(output_dir,"data","london_built_up.csv")),
-    read.csv(file.path(output_dir,"data","london_land_diversity.csv"))
+    read.csv(file.path(output_dir,"data","built_up_lnd.csv")),
+    read.csv(file.path(output_dir,"data","land_diversity_lnd.csv"))
   ),
   
   RND = prep_landscape(
-    read.csv(file.path(output_dir,"data","randstad_built_up.csv")),
-    read.csv(file.path(output_dir,"data","randstad_land_diversity.csv"))
+    read.csv(file.path(output_dir,"data","built_up_rnd.csv")),
+    read.csv(file.path(output_dir,"data","land_diversity_rnd.csv"))
   )
 )
 
 
 #5. Merge diversity–stability and landscape data ####
-
 
 results <- list(
   
@@ -160,12 +183,10 @@ sem_template <- function(buffer) {
   ')
 }
 
-
 buffers <- c(1000, 2000, 5000)
 
 
 #7. Run SEMs ####
-
 
 sem_results <- expand.grid(
   region = names(results),
@@ -233,7 +254,7 @@ sem_paths <- sem_results %>%
 
 write.csv(
   sem_paths,
-  file.path(output_dir,"data","SEM_paths_all_regions_buffers.csv"),
+  file.path(output_dir,"results","SEM_paths_all_regions_buffers.csv"),
   row.names = FALSE
 )
 
@@ -311,7 +332,7 @@ write.csv(
   glm_table,
   file.path(
     output_dir,
-    "data",
+    "results",
     "GLM_diversity_stability_interactions.csv"
   ),
   row.names = FALSE

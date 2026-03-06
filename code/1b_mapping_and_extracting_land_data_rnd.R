@@ -26,12 +26,12 @@
 #                                                                              #
 #   Output:                                                                    #
 #   - Built-up surface dataset:                                                #
-#         output/data/rnd_built_up.csv                                    #
+#         output/data/built_up_rnd.csv                                         #
 #   - Land cover diversity dataset:                                            #
-#         output/data/rnd_land_diversity.csv                              #
+#         output/data/land_diversity_rnd.csv                                   #
 #   - Maps:                                                                    #
-#         output/figures/rnd_urb_map.png                                  #
-#         output/figures/rnd_landcover_map.png                            #
+#         output/figures/urb_map_rnd.png                                       #
+#         output/figures/landcover_map_rnd.png                                 #
 #                                                                              #
 #   *Note: Raw EBMS data are not publicly available in this repository.        #
 #   Access requires a signed data-sharing agreement with the                   #
@@ -39,6 +39,7 @@
 #   Data requests can be submitted through:                                    #
 #   https://butterfly-monitoring.net/                                          #
 # ============================================================================ #
+
 
 
 #1. Libraries ####
@@ -349,7 +350,7 @@ map_urb_rnd <- ggplot() +
 
 
 ggsave(
-  file.path(output_dir, "figures", "rnd_urb_map.png"),
+  file.path(output_dir, "figures", "urb_map_rnd.png"),
   map_urb_rnd,
   width = 5.5,
   height = 5,
@@ -436,7 +437,7 @@ map_lc_rnd <- ggplot() +
 
 
 ggsave(
-  file.path(output_dir, "figures", "rnd_landcover_map.png"),
+  file.path(output_dir, "figures", "landcover_map_rnd.png"),
   map_lc_rnd,
   width = 5.5,
   height = 5,
@@ -505,7 +506,7 @@ landdiv_df <- sites_buffer %>%
 
 write.csv(
   landdiv_df,
-  file.path(output_dir, "data", "rnd_land_diversity.csv"),
+  file.path(output_dir, "data", "land_diversity_rnd.csv"),
   row.names = FALSE
 )
 

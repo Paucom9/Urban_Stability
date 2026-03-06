@@ -19,9 +19,9 @@
 #                                                                              #
 #   Output:                                                                    #
 #   - Annual abundance indices (SINDEX)                                        #
-#         output/data/bcn_annual_abundance.csv                                 #
-#         output/data/lnd_annual_abundance.csv                                 #
-#         output/data/rnd_annual_abundance.csv                                 #
+#         output/data/annual_abundance_bcn.csv                                 #
+#         output/data/annual_abundance_lnd.csv                                 #
+#         output/data/annual_abundance_rnd.csv                                 #
 #                                                                              #
 #   *Note: Raw EBMS data are not publicly available in this repository.        #
 #   Access requires a signed data-sharing agreement with the                   #
@@ -29,6 +29,8 @@
 #   Data requests can be submitted through:                                    #
 #   https://butterfly-monitoring.net/                                          #
 # ============================================================================ #
+
+
 
 #1. Libraries ####
 
@@ -156,7 +158,7 @@ regions <- list(
       file.path(output_dir, "data", "bcn_built_up.csv")
     )$SITE_ID,
     out = file.path(
-      output_dir, "data", "bcn_annual_abundance.csv"
+      output_dir, "data", "annual_abundance_bcn.csv"
     )
   ),
   
@@ -167,7 +169,7 @@ regions <- list(
       file.path(output_dir, "data", "lnd_built_up.csv")
     )$SITE_ID,
     out = file.path(
-      output_dir, "data", "lnd_annual_abundance.csv"
+      output_dir, "data", "annual_abundance_lnd.csv"
     )
   ),
   
@@ -178,7 +180,7 @@ regions <- list(
       file.path(output_dir, "data", "rnd_built_up.csv")
     )$SITE_ID,
     out = file.path(
-      output_dir, "data", "rnd_annual_abundance.csv"
+      output_dir, "data", "annual_abundance_rnd.csv"
     )
   )
 )

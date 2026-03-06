@@ -9,19 +9,9 @@
 #                                                                              #
 #   Input*:                                                                    #
 #   - Annual abundance indices                                                 #
-#         output/data/bcn_annual_abundance.csv                                 #
-#         output/data/lnd_annual_abundance.csv                                 #
-#         output/data/rnd_annual_abundance.csv                                 #
-#                                                                              #
-#   - Urbanization variables                                                   #
-#         output/data/barcelona_built_up.csv                                   #
-#         output/data/london_built_up.csv                                      #
-#         output/data/randstad_built_up.csv                                    #
-#                                                                              #
-#   - Landscape diversity datasets                                             #
-#         output/data/barcelona_land_diversity.csv                             #
-#         output/data/london_land_diversity.csv                                #
-#         output/data/randstad_land_diversity.csv                              #
+#         output/data/annual_abundance_bcn.csv                                 #
+#         output/data/annual_abundance_lnd.csv                                 #
+#         output/data/annual_abundance_rnd.csv                                 #
 #                                                                              #
 #   - Species traits                                                           #
 #   (extracted from Middleton-Welling et al. 2020; Scientific Data, 7(1), 351) #  
@@ -37,7 +27,7 @@
 #         output/data/diversity_stability_lnd.csv                              #
 #         output/data/diversity_stability_rnd.csv                              #
 #                                                                              #
-#   * Note: Annual abundance indices are not publicly available                #
+#   *Note: Annual abundance indices are not publicly available                #
 #   in this repository.                                                        #
 #   Access requires a signed data-sharing agreement with the                   #
 #   European Butterfly Monitoring Scheme (eBMS).                               #
@@ -46,7 +36,8 @@
 # ============================================================================ #
 
 
-# 1. Libraries ####
+
+#1. Libraries ####
 
 library(dplyr)
 library(tidyr)
@@ -62,14 +53,14 @@ library(here)
 
 #2. Define project folders ####
 
-input_dir  <- here("input")
-output_dir <- here("output")
+input_dir  <- here("input", "data")
+output_dir <- here("output", "data")
 
 
 #3. Load traits and phylogeny ####
 
 traits_raw <- read.csv(
-  file.path(input_dir, "data", "species_trait_table.csv"),
+  file.path(input_dir, "species_trait_table.csv"),
   sep = ";"
 )
 
@@ -102,7 +93,6 @@ traits <- traits_raw %>%
 tree <- read.tree(
   file.path(
     input_dir,
-    "data",
     "phylogeny.nwk"
   )
 )
@@ -110,10 +100,7 @@ tree <- read.tree(
 tree$tip.label <- gsub("_"," ",tree$tip.label)
 
 
-
-
 #4. Stability calculation function ####
-
 
 calculate_stability <- function(df, tree, min_species = 2) {
   
@@ -313,30 +300,23 @@ calculate_stability <- function(df, tree, min_species = 2) {
 }
 
 
-
 #5. Define study regions ####
 
 regions <- list(
   
   bcn = list(
-    sindex = file.path(output_dir,"data","sindex_bcn_18_23.csv"),
-    built  = file.path(output_dir,"data","barcelona_built_up.csv"),
-    habdiv = file.path(output_dir,"data","barcelona_land_diversity.csv"),
-    out    = file.path(output_dir,"data","diversity_stability_bcn.csv")
+    abund = file.path(output_dir,"annual_abundance_bcn.csv"),
+    out   = file.path(output_dir,"diversity_stability_bcn.csv")
   ),
   
   london = list(
-    sindex = file.path(output_dir,"data","sindex_london_17_23.csv"),
-    built  = file.path(output_dir,"data","london_built_up.csv"),
-    habdiv = file.path(output_dir,"data","london_land_diversity.csv"),
-    out    = file.path(output_dir,"data","diversity_stability_london.csv")
+    abund = file.path(output_dir,"annual_abundance_lnd.csv"),
+    out   = file.path(output_dir,"diversity_stability_lnd.csv")
   ),
   
   randstad = list(
-    sindex = file.path(output_dir,"data","sindex_randstad_17_23.csv"),
-    built  = file.path(output_dir,"data","randstad_built_up.csv"),
-    habdiv = file.path(output_dir,"data","randstad_land_diversity.csv"),
-    out    = file.path(output_dir,"data","diversity_stability_randstad.csv")
+    abund = file.path(output_dir,"annual_abundance_rnd.csv"),
+    out   = file.path(output_dir,"diversity_stability_rnd.csv")
   )
   
 )
@@ -350,26 +330,53 @@ for (r in names(regions)) {
   
   cfg <- regions[[r]]
   
-  df <- read.csv(cfg$sindex) %>%
-    rename(YEAR = M_YEAR) %>%
-    left_join(read.csv(cfg$built), by = "SITE_ID") %>%
-    left_join(read.csv(cfg$habdiv), by = c("SITE_ID","CONTEXT")) %>%
-    left_join(traits, by = "SPECIES")
+  # ---- Load abundance ----
   
-  if (!"SINDEX_std" %in% names(df)) {
-    df <- df %>% mutate(SINDEX_std = SINDEX)
-  }
+  df <- read.csv(cfg$abund, sep = ifelse(r == "bcn", ";", ",")) %>%
+    rename(YEAR = any_of(c("YEAR","M_YEAR"))) %>%
+    mutate(
+      ABUND = SINDEX,
+      ABUND = ifelse(ABUND < 0, NA, ABUND)
+    )
+  
+  # ---- Expand SITE × SPECIES × YEAR matrix ----
+  
+  site_years <- df %>%
+    distinct(SITE_ID, YEAR)
+  
+  species_sites <- df %>%
+    group_by(SITE_ID, SPECIES) %>%
+    summarise(
+      ever_present = any(ABUND > 0, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    filter(ever_present) %>%
+    select(-ever_present)
+  
+  expanded <- species_sites %>%
+    left_join(site_years, by = "SITE_ID")
+  
+  df <- expanded %>%
+    left_join(df, by = c("SITE_ID","SPECIES","YEAR")) %>%
+    mutate(
+      ABUND = ifelse(is.na(ABUND), 0, ABUND)
+    )
+  
+  # ---- Add traits ----
   
   df <- df %>%
-    mutate(
-      ABUND = SINDEX_std,
-      urban_context = as.numeric(CONTEXT == "inside")
-    )
+    left_join(traits, by = "SPECIES")
+  
+  # ---- Calculate stability metrics ----
   
   res <- calculate_stability(df, tree)
   
+  # ---- Standardize numeric variables ----
+  
   res_std <- res %>%
     mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
+  
+  # ---- Save output ----
   
   write.csv(res_std, cfg$out, row.names = FALSE)
 }
