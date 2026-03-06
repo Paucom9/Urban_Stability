@@ -100,108 +100,126 @@ tree <- read.tree(
 tree$tip.label <- gsub("_"," ",tree$tip.label)
 
 
-#4. Stability calculation function ####
+#4. Diversity and stability calculation function ####
 
-calculate_stability <- function(df, tree, min_species = 2) {
+calculate_diversity_stability <- function(df, tree, min_species = 2){
   
-  calc_evar <- function(x) {
+  # ---- Helper function (Smith & Wilson Evar) ----
+  
+  calc_evar <- function(x){
     x <- x[x > 0]
-    if (length(x) < 2) return(NA)
+    if(length(x) < 2) return(NA)
     v <- var(log(x))
-    1 - (2 / pi) * atan(v)
+    1 - (2/pi) * atan(v)
   }
   
+  
+  # ---- Remove negative values ----
+  
   df <- df %>%
-    mutate(ABUND = ifelse(ABUND < 0, NA, ABUND))
+    mutate(SINDEX_std = ifelse(SINDEX_std < 0, NA, SINDEX_std))
+  
+  
+  # ---- Collapse abundances per site-year-species ----
   
   df_sum <- df %>%
     group_by(SITE_ID, YEAR, SPECIES) %>%
     summarise(
-      ABUND = sum(ABUND, na.rm = TRUE),
+      SINDEX_std = sum(SINDEX_std, na.rm = TRUE),
       .groups = "drop"
     )
+  
   
   # ---- Population stability ----
   
   pop_stats <- df_sum %>%
     group_by(SITE_ID, SPECIES) %>%
     summarise(
-      mu = mean(ABUND, na.rm = TRUE),
-      sd = sd(ABUND, na.rm = TRUE),
-      n  = sum(!is.na(ABUND)),
+      mean_abundance = mean(SINDEX_std, na.rm = TRUE),
+      sd_abundance   = sd(SINDEX_std, na.rm = TRUE),
+      n_years        = sum(!is.na(SINDEX_std)),
       .groups = "drop"
     ) %>%
-    filter(mu > 0, sd > 0, n >= 3) %>%
-    mutate(stability = mu / sd)
+    filter(mean_abundance > 0, sd_abundance > 0, n_years >= 3) %>%
+    mutate(
+      cv = sd_abundance / mean_abundance,
+      stability = 1 / cv
+    )
   
   pop_site <- pop_stats %>%
     group_by(SITE_ID) %>%
     summarise(
-      mean_population_abundance = mean(mu, na.rm = TRUE),
+      mean_population_abundance = mean(mean_abundance, na.rm = TRUE),
       mean_population_stability = mean(stability, na.rm = TRUE),
-      wm_population_stability   = weighted.mean(stability, mu, na.rm = TRUE),
+      wm_population_stability   = weighted.mean(stability, mean_abundance, na.rm = TRUE),
       .groups = "drop"
     )
+  
   
   # ---- Community stability ----
   
   comm_year <- df_sum %>%
     group_by(SITE_ID, YEAR) %>%
     summarise(
-      total = sum(ABUND, na.rm = TRUE),
+      total_abundance = sum(SINDEX_std, na.rm = TRUE),
       .groups = "drop"
     )
   
   comm_stats <- comm_year %>%
     group_by(SITE_ID) %>%
     summarise(
-      mean_community_abundance = mean(total, na.rm = TRUE),
-      sd_community_abundance   = sd(total, na.rm = TRUE),
-      n = n(),
+      mean_community_abundance = mean(total_abundance, na.rm = TRUE),
+      sd_community_abundance   = sd(total_abundance, na.rm = TRUE),
+      n_years = n(),
       .groups = "drop"
     ) %>%
     filter(
       mean_community_abundance > 0,
       sd_community_abundance > 0,
-      n >= 3
+      n_years >= 3
     ) %>%
     mutate(
       community_stability =
-        mean_community_abundance /
-        sd_community_abundance
+        1 / (sd_community_abundance / mean_community_abundance)
     )
+  
   
   # ---- Species asynchrony ----
   
-  asynchrony <- map_dfr(
-    unique(df_sum$SITE_ID),
-    function(site) {
-      
-      mat <- df_sum %>%
-        filter(SITE_ID == site) %>%
-        pivot_wider(
-          names_from = SPECIES,
-          values_from = ABUND,
-          values_fill = 0
-        ) %>%
-        arrange(YEAR) %>%
-        select(where(is.numeric)) %>%
-        as.matrix()
-      
-      mu <- colMeans(mat)
-      mat <- mat[, mu > 0, drop = FALSE]
-      
-      if (ncol(mat) < min_species) return(NULL)
-      
-      phi <- sd(rowSums(mat))^2 /
-        sum(apply(mat, 2, sd))^2
-      
-      tibble(
-        SITE_ID = site,
-        species_asynchrony = -log(phi)
-      )
-    }
-  )
+  site_ids <- unique(df_sum$SITE_ID)
+  
+  asynchrony <- map_dfr(site_ids, function(site){
+    
+    site_dat <- df_sum %>% filter(SITE_ID == site)
+    
+    comm <- site_dat %>%
+      pivot_wider(
+        names_from = SPECIES,
+        values_from = SINDEX_std,
+        values_fill = 0
+      ) %>%
+      arrange(YEAR)
+    
+    mat <- comm %>%
+      select(where(is.numeric)) %>%
+      as.matrix()
+    
+    mu <- colMeans(mat)
+    mat <- mat[, mu > 0, drop = FALSE]
+    
+    if(ncol(mat) < min_species) return(NULL)
+    
+    sigma_i   <- apply(mat, 2, sd)
+    sigma_com <- sd(rowSums(mat))
+    
+    phi <- (sigma_com^2) / (sum(sigma_i)^2)
+    
+    tibble(
+      SITE_ID = site,
+      species_asynchrony = -log(phi)
+    )
+  })
+  
   
   # ---- Species richness ----
   
@@ -212,22 +230,25 @@ calculate_stability <- function(df, tree, min_species = 2) {
       .groups = "drop"
     )
   
+  
   # ---- Shannon diversity ----
   
   shannon <- df_sum %>%
     group_by(SITE_ID, YEAR) %>%
     nest() %>%
     mutate(
-      shannon_diversity =
-        map_dbl(
-          data,
-          ~ diversity(tapply(.x$ABUND, .x$SPECIES, sum))
-        ),
-      evenness_sw =
-        map_dbl(
-          data,
-          ~ calc_evar(tapply(.x$ABUND, .x$SPECIES, sum))
+      shannon_diversity = map_dbl(
+        data,
+        ~ vegan::diversity(
+          tapply(.x$SINDEX_std, .x$SPECIES, sum),
+          index = "shannon")
+      ),
+      evenness_sw = map_dbl(
+        data,
+        ~ calc_evar(
+          tapply(.x$SINDEX_std, .x$SPECIES, sum)
         )
+      )
     ) %>%
     group_by(SITE_ID) %>%
     summarise(
@@ -236,12 +257,13 @@ calculate_stability <- function(df, tree, min_species = 2) {
       .groups = "drop"
     )
   
-  # ---- Functional diversity ----
+  
+  # ---- Functional diversity (FDis) ----
   
   comm <- df %>%
     group_by(SITE_ID, SPECIES) %>%
     summarise(
-      abund = sum(ABUND, na.rm = TRUE),
+      abund = sum(SINDEX_std, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     pivot_wider(
@@ -268,7 +290,8 @@ calculate_stability <- function(df, tree, min_species = 2) {
     FDis = fdis
   )
   
-  # ---- Phylogenetic diversity ----
+  
+  # ---- Phylogenetic diversity (MPD) ----
   
   sp_phy <- intersect(tree$tip.label, colnames(comm))
   
@@ -288,15 +311,25 @@ calculate_stability <- function(df, tree, min_species = 2) {
     )
   )
   
+  
   # ---- Merge all metrics ----
   
-  comm_stats %>%
+  results <- comm_stats %>%
     left_join(pop_site, by = "SITE_ID") %>%
     left_join(richness, by = "SITE_ID") %>%
     left_join(shannon, by = "SITE_ID") %>%
     left_join(asynchrony, by = "SITE_ID") %>%
     left_join(fdis_df, by = "SITE_ID") %>%
-    left_join(phylo_df, by = "SITE_ID")
+    left_join(phylo_df, by = "SITE_ID") %>%
+    mutate(
+      community_stability        = log1p(community_stability),
+      mean_community_abundance   = log1p(mean_community_abundance),
+      mean_population_abundance  = log1p(mean_population_abundance),
+      mean_population_stability  = log1p(mean_population_stability),
+      wm_population_stability    = log1p(wm_population_stability)
+    )
+  
+  return(results)
 }
 
 
@@ -335,8 +368,7 @@ for (r in names(regions)) {
   df <- read.csv(cfg$abund, sep = ifelse(r == "bcn", ";", ",")) %>%
     rename(YEAR = any_of(c("YEAR","M_YEAR"))) %>%
     mutate(
-      ABUND = SINDEX,
-      ABUND = ifelse(ABUND < 0, NA, ABUND)
+      SINDEX_std = ifelse(SINDEX < 0, NA, SINDEX)
     )
   
   # ---- Expand SITE × SPECIES × YEAR matrix ----
@@ -347,19 +379,19 @@ for (r in names(regions)) {
   species_sites <- df %>%
     group_by(SITE_ID, SPECIES) %>%
     summarise(
-      ever_present = any(ABUND > 0, na.rm = TRUE),
+      ever_present = any(SINDEX_std > 0, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     filter(ever_present) %>%
     select(-ever_present)
   
   expanded <- species_sites %>%
-    left_join(site_years, by = "SITE_ID")
+    left_join(site_years, by = "SITE_ID", relationship = "many-to-many")
   
   df <- expanded %>%
     left_join(df, by = c("SITE_ID","SPECIES","YEAR")) %>%
     mutate(
-      ABUND = ifelse(is.na(ABUND), 0, ABUND)
+      SINDEX_std = ifelse(is.na(SINDEX_std), 0, SINDEX_std)
     )
   
   # ---- Add traits ----
@@ -369,9 +401,10 @@ for (r in names(regions)) {
   
   # ---- Calculate stability metrics ----
   
-  res <- calculate_stability(df, tree)
+  res <- calculate_diversity_stability(df, tree)
   
   # ---- Save output ----
   
   write.csv(res, cfg$out, row.names = FALSE)
 }
+

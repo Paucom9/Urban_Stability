@@ -150,7 +150,7 @@ results <- list(
   
   RND = left_join(ds$RND, landscape$RND, by = "SITE_ID")
 )
-
+results <- map(results, \(df) df %>% filter(!is.na(urban_context)))
 
 #6. Standardize SEM variables ####
 
@@ -166,19 +166,15 @@ sem_vars <- c(
   "habdiv1000","habdiv2000","habdiv5000"
 )
 
-results <- purrr::map(
+results <- map(
   results,
-  function(df) {
-    
-    df %>%
-      mutate(
-        across(
-          any_of(sem_vars),
-          \(x) as.numeric(scale(x))
-        )
+  \(df) df %>%
+    mutate(
+      across(
+        where(is.numeric) & !matches("urban_context"),
+        ~ as.numeric(scale(.))
       )
-    
-  }
+    )
 )
 
 #7. SEM specification ####
@@ -290,7 +286,6 @@ write.csv(
 
 #10. Prepare data for GLMs ####
 
-
 all_cities <- bind_rows(
   mutate(results$BCN, city = "BCN"),
   mutate(results$LND, city = "LND"),
@@ -365,4 +360,144 @@ write.csv(
     "GLM_diversity_stability_interactions.csv"
   ),
   row.names = FALSE
+)
+
+
+# Plot GLMM effects #### 
+
+effects <- map(
+  biodiv_vars,
+  \(v) ggpredict(
+    glm_models[[v]],
+    terms = c(v, "urban_context")
+  )
+)
+
+names(effects) <- biodiv_vars
+
+make_plot <- function(eff, xvar, data, xlab){
+  
+  ggplot() +
+    
+    geom_point(
+      data = data,
+      aes_string(
+        x = xvar,
+        y = "community_stability",
+        color = "urban_context"
+      ),
+      alpha = 0.25,
+      size = 1
+    ) +
+    
+    geom_line(
+      data = eff,
+      aes(
+        x = x,
+        y = predicted,
+        color = group
+      ),
+      linewidth = 1
+    ) +
+    
+    geom_ribbon(
+      data = eff,
+      aes(
+        x = x,
+        ymin = conf.low,
+        ymax = conf.high,
+        fill = group
+      ),
+      alpha = 0.25
+    ) +
+    
+    scale_color_manual(
+      values = c("Urban" = "#D55E00", "Rural" = "#0072B2"),
+      name = "Urban context"
+    ) +
+    
+    scale_fill_manual(
+      values = c("Urban" = "#D55E00", "Rural" = "#0072B2"),
+      guide = "none"
+    ) +
+    
+    labs(
+      x = xlab,
+      y = "Community stability"
+    ) +
+    
+    theme_classic(base_family = "Garamond", base_size = 14) +
+    
+    theme(
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.8
+      ),
+      axis.line = element_blank(),
+      legend.position = "bottom"
+    )
+}
+
+
+p1 <- make_plot(
+  effects$species_richness,
+  "species_richness",
+  all_cities,
+  "Species richness"
+)
+
+p2 <- make_plot(
+  effects$shannon_diversity,
+  "shannon_diversity",
+  all_cities,
+  "Species diversity"
+) +
+  ylab(NULL) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+p3 <- make_plot(
+  effects$FDis,
+  "FDis",
+  all_cities,
+  "Functional diversity"
+)
+
+p4 <- make_plot(
+  effects$MPD,
+  "MPD",
+  all_cities,
+  "Phylogenetic diversity"
+) +
+  ylab(NULL) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+final_plot <- ((p1 | p2) / (p3 | p4)) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.title = element_blank()
+  )
+
+final_plot
+
+
+ggsave(
+  filename = file.path(
+    output_dir,
+    "figures",
+    "fig_diversity_stability_context.png"
+  ),
+  plot = final_plot,
+  width = 5.5,
+  height = 5.5,
+  dpi = 600,
+  bg = "white"
 )
