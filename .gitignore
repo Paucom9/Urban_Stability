@@ -1,4 +1,26 @@
-.Rproj.user
+# R session files
 .Rhistory
 .RData
-.Ruserdata
+.RDataTmp*
+.Rproj.user/
+
+# RStudio
+.Rproj.user
+*.Rproj.user
+
+# Temporary files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Output files (si son resultados generados)
+output/
+
+# Large data (si no quieres subir datos brutos)
+input/
+
+# Cache
+.cache/
