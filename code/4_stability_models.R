@@ -58,7 +58,6 @@ output_dir <- here("output")
 
 #3. Load diversity–stability datasets ####
 
-
 ds <- list(
   
   BCN = read.csv(
@@ -283,6 +282,12 @@ write.csv(
   row.names = FALSE
 )
 
+# ---- Note on SEM figure visualization ----
+# The SEM path diagrams presented in the manuscript were generated from the
+# standardized path coefficients obtained here. For clarity and graphical
+# consistency, the final diagrams shown in the figures were subsequently
+# assembled and edited using an external image editor.
+
 
 #10. Prepare data for GLMs ####
 
@@ -363,7 +368,7 @@ write.csv(
 )
 
 
-# Plot GLMM effects #### 
+#12. Plot GLMM effects #### 
 
 effects <- map(
   biodiv_vars,
@@ -498,6 +503,98 @@ ggsave(
   plot = final_plot,
   width = 5.5,
   height = 5.5,
+  dpi = 600,
+  bg = "white"
+)
+
+
+#13. Plot Diversity–stability relationships by region #### 
+
+# ---- Helper function ----
+
+make_city_plot <- function(data, xvar, xlab){
+  
+  ggplot(
+    data,
+    aes(
+      x = .data[[xvar]],
+      y = community_stability,
+      color = urban_context,
+      fill  = urban_context
+    )
+  ) +
+    geom_point(alpha = 0.3, size = 0.5) +
+    geom_smooth(method = "lm", se = TRUE, linewidth = 1, alpha = 0.2) +
+    
+    scale_color_manual(
+      values = c("Urban" = "#D55E00", "Rural" = "#0072B2"),
+      name = "Urban context"
+    ) +
+    
+    scale_fill_manual(
+      values = c("Urban" = "#D55E00", "Rural" = "#0072B2"),
+      guide = "none"
+    ) +
+    
+    labs(
+      x = xlab,
+      y = "Community stability"
+    ) +
+    
+    facet_wrap(~city, scales = "free_x") +
+    
+    theme_classic(base_family = "Garamond", base_size = 14) +
+    theme(
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+      axis.line = element_blank(),
+      legend.position = "none",
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      strip.text = element_text(family = "Garamond", size = 12, face = "bold")
+    )
+}
+
+# ---- Generate plots ----
+
+r1 <- make_city_plot(all_cities, "species_richness", "Species richness") +
+  theme(strip.background = element_blank())
+
+r2 <- make_city_plot(all_cities, "shannon_diversity", "Species diversity") +
+  ylab(NULL) +
+  theme(strip.background = element_blank())
+
+r3 <- make_city_plot(all_cities, "FDis", "Functional diversity") +
+  theme(strip.background = element_blank())
+
+r4 <- make_city_plot(all_cities, "MPD", "Phylogenetic diversity") +
+  ylab(NULL) +
+  theme(strip.background = element_blank())
+
+# ---- combined multipanel ----
+
+alt_plot <- ((r1 | r2) / (r3 | r4)) +
+  plot_annotation(tag_levels = "a") +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_blank(),
+    legend.text = element_text(family = "Garamond", size = 12),
+    legend.margin = margin(t = -4, b = 0),
+    strip.background = element_blank(),
+    plot.tag = element_text(family = "Garamond", size = 16, face = "bold"),
+    plot.margin = margin(t = 0, r = 2, b = 1, l = 2)
+  )
+
+alt_plot
+
+# ---- save figure ----
+
+ggsave(
+  filename = here("output","figures","fig_diversity_stability_context_region.png"),
+  plot = alt_plot,
+  width = 7,
+  height = 6,
   dpi = 600,
   bg = "white"
 )

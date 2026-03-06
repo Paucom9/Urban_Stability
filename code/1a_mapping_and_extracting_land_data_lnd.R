@@ -1,5 +1,5 @@
 # ============================================================================ #
-#   1a_mapping_and_extracting_land_data_lnd.R                               #
+#   1a_mapping_and_extracting_land_data_lnd.R                                  #
 #   Author: Pau Colom                                                          #
 #                                                                              #
 #   This script prepares spatial data for the London study system.             #
@@ -273,33 +273,68 @@ ghsl_df$built_log <- log1p(ghsl_df$built)
 
 #12. Load land cover tiles ####
 
-lc_files <- list.files(
-  file.path(input_dir, "land_cover"),
-  full.names = TRUE
+# ---- Path to cached raster ----
+
+lc_lnd_file <- here(
+  "input",
+  "land_cover",
+  "lc_raster_low_lnd.tif"
 )
 
-lc_tiles <- lc_files[
-  grepl("N51W003|N48W003|N51E000|N48E00", lc_files)
-]
+if (!file.exists(lc_lnd_file)) {
+  
+  # ---- List tiles ----
+  
+  lc_files <- list.files(
+    file.path(input_dir, "land_cover"),
+    full.names = TRUE
+  )
+  
+  lc_tiles <- lc_files[
+    grepl("N51W003|N48W003|N51E000|N48E00", lc_files)
+  ]
+  
+  # ---- Mosaic tiles ----
+  
+  lc_raster_lnd <- do.call(mosaic, lapply(lc_tiles, rast))
+  
+  # ---- Crop and mask to study region ----
+  
+  lc_crop_lnd <- terra::crop(lc_raster_lnd, vect(lnd_buffer))
+  lc_mask_lnd <- terra::mask(lc_crop_lnd, vect(lnd_buffer))
+  
+  # ---- Aggregate resolution (dominant class) ----
+  
+  lc_raster_low_lnd <- terra::aggregate(
+    lc_mask_lnd,
+    fact = 25,
+    fun = modal,
+    na.rm = TRUE
+  )
+  
+  # ---- Save aggregated raster ----
+  
+  writeRaster(
+    lc_raster_low_lnd,
+    lc_lnd_file,
+    overwrite = TRUE
+  )
+  
+} else {
+  
+  # ---- Load cached raster ----
+  
+  lc_raster_low_lnd <- rast(lc_lnd_file)
+  
+}
 
-lc_raster_lnd <- do.call(mosaic, lapply(lc_tiles, rast))
-
-lc_crop_lnd <- terra::crop(lc_raster_lnd, vect(lnd_buffer))
-
-lc_mask_lnd <- terra::mask(lc_crop_lnd, vect(lnd_buffer))
-
-lc_raster_low_lnd <- terra::aggregate(
-  lc_mask_lnd,
-  fact = 25,
-  fun = function(x) {
-    ux <- unique(x)
-    ux[which.max(tabulate(match(x, ux)))]
-  }
-)
+# ---- Convert raster to dataframe ----
 
 lc_df_lnd <- as.data.frame(lc_raster_low_lnd, xy = TRUE)
+
 names(lc_df_lnd)[3] <- "class"
 
+# ---- Extract water pixels ----
 
 water_df_lnd <- lc_df_lnd %>%
   dplyr::filter(class == 80)

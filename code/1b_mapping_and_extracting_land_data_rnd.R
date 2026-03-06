@@ -1,5 +1,5 @@
 # ============================================================================ #
-#   1b_mapping_and_extracting_land_data_rnd.R                             #
+#   1b_mapping_and_extracting_land_data_rnd.R                                  #
 #   Author: Pau Colom                                                          #
 #                                                                              #
 #   This script prepares spatial data for the Randstad study system.           #
@@ -108,9 +108,6 @@ sites_sf <- st_transform(sites_sf, 4326)
 
 
 #6. Get Randstad city boundaries ####
-# (download once from OSM or load from input folder)
-
-# 6. Get Randstad city boundaries ####
 # (download once from OSM or load from input folder)
 
 amsterdam_file <- file.path(input_dir, "city_boundaries", "amsterdam_boundary.gpkg")
@@ -256,28 +253,70 @@ lc_files <- list.files(
 
 #10. Load land cover tiles ####
 
-lc_tiles <- lc_files[
-  grepl("N51E000|N51E003|N51E006", lc_files)
-]
+# ---- Path for cached raster ----
 
-lc_raster_rnd <- do.call(mosaic, lapply(lc_tiles, rast))
+lc_rnd_file <- file.path(input_dir, "land_cover", "lc_raster_low_rnd.tif")
 
-lc_crop_rnd <- terra::crop(lc_raster_rnd, vect(rnd_buffer))
+if (!file.exists(lc_rnd_file)) {
+  
+  # ---- Select tiles ----
+  
+  lc_tiles <- lc_files[
+    grepl("N51E000|N51E003|N51E006", lc_files)
+  ]
+  
+  # ---- Mosaic tiles ----
+  
+  lc_raster_rnd <- mosaic(rast(lc_tiles))
+  
+  # ---- Crop and mask to study region ----
+  
+  lc_crop_rnd <- terra::crop(lc_raster_rnd, vect(rnd_buffer))
+  
+  lc_extended_rnd <- terra::extend(
+    lc_crop_rnd,
+    vect(rnd_buffer)
+  )
+  
+  lc_extended_rnd[is.na(lc_extended_rnd)] <- 80
+  
+  lc_mask_rnd <- terra::mask(
+    lc_extended_rnd,
+    vect(rnd_buffer)
+  )
+  
+  # ---- Aggregate resolution (dominant land cover class) ----
+  
+  lc_raster_low_rnd <- terra::aggregate(
+    lc_mask_rnd,
+    fact = 25,
+    fun = modal,
+    na.rm = TRUE
+  )
+  
+  # ---- Save aggregated raster ----
+  
+  writeRaster(
+    lc_raster_low_rnd,
+    lc_rnd_file,
+    overwrite = TRUE
+  )
+  
+} else {
+  
+  # ---- Load cached raster ----
+  
+  lc_raster_low_rnd <- rast(lc_rnd_file)
+  
+}
 
-lc_mask_rnd <- terra::mask(lc_crop_rnd, vect(rnd_buffer))
-
-lc_raster_low_rnd <- terra::aggregate(
-  lc_mask_rnd,
-  fact = 25,
-  fun = function(x) {
-    ux <- unique(x)
-    ux[which.max(tabulate(match(x, ux)))]
-  }
-)
+# ---- Convert raster to dataframe ----
 
 lc_df_rnd <- as.data.frame(lc_raster_low_rnd, xy = TRUE)
 
 names(lc_df_rnd)[3] <- "class"
+
+# ---- Extract water pixels ----
 
 water_df_rnd <- lc_df_rnd %>%
   dplyr::filter(class == 80)
@@ -315,29 +354,51 @@ map_urb_rnd <- ggplot() +
     alpha = 0.5
   ) +
   
-  geom_sf(data = all_boundaries, fill = NA, color = "black", size = 1.5) +
-  
-  geom_sf(data = sites_buffer, aes(color = context), size = 1) +
-  
   geom_raster(
     data = water_df_rnd,
     aes(x = x, y = y),
-    fill = "white",
-    alpha = 1
+    fill = "white"
   ) +
   
-  geom_sf(data = rnd_buffer, fill = NA, color = "black", size = 1.5) +
+  geom_sf(
+    data = all_boundaries,
+    fill = NA,
+    color = "black",
+    size = 1.5
+  ) +
   
-  scale_fill_viridis(option = "D", name = "Built-up surface") +
+  geom_sf(
+    data = rnd_buffer,
+    fill = NA,
+    color = "black",
+    size = 1.5
+  ) +
+  
+  geom_sf(
+    data = sites_buffer,
+    aes(color = context),
+    size = 1
+  ) +
+  
+  scale_fill_viridis(
+    option = "D",
+    name = "Built-up surface"
+  ) +
   
   scale_color_manual(
     values = c(inside = "red", outside = "black"),
     guide = "none"
   ) +
   
-  labs(x = "Longitude", y = "Latitude") +
+  labs(
+    x = "Longitude",
+    y = "Latitude"
+  ) +
   
-  theme_minimal(base_family = "Garamond", base_size = 18) +
+  theme_minimal(
+    base_family = "Garamond",
+    base_size = 18
+  ) +
   
   theme(
     panel.grid = element_blank(),
@@ -348,6 +409,7 @@ map_urb_rnd <- ggplot() +
   
   annotation_scale(location = "bl")
 
+map_urb_rnd
 
 ggsave(
   file.path(output_dir, "figures", "urb_map_rnd.png"),
@@ -435,6 +497,7 @@ map_lc_rnd <- ggplot() +
   
   annotation_scale(location = "bl")
 
+map_lc_rnd
 
 ggsave(
   file.path(output_dir, "figures", "landcover_map_rnd.png"),

@@ -362,36 +362,77 @@ ghsl_df$built_log <- log1p(ghsl_df$built)
 
 #17. Load land cover tiles ####
 
-lc_files <- list.files(
-  file.path(input_dir,"land_cover"),
-  full.names=TRUE
+# ---- Path to cached raster ----
+
+lc_bcn_file <- here(
+  "input",
+  "land_cover",
+  "lc_raster_low_bcn.tif"
 )
 
-lc_tiles <- lc_files[
-  grepl("N39E000",lc_files)
-]
-
-lc_raster_bcn <- mosaic(
-  sprc(lapply(lc_tiles,rast))
-)
-
-lc_crop_bcn <- crop(lc_raster_bcn,vect(bcn_buffer))
-lc_mask_bcn <- mask(lc_crop_bcn,vect(bcn_buffer))
-
-lc_raster_low_bcn <- aggregate(
-  lc_mask_bcn,
-  fact=25,
-  fun=function(x){
-    ux<-unique(x)
-    ux[which.max(tabulate(match(x,ux)))]
+if (!file.exists(lc_bcn_file)) {
+  
+  # ---- List tiles ----
+  
+  lc_files <- list.files(
+    file.path(input_dir, "land_cover"),
+    full.names = TRUE
+  )
+  
+  lc_tiles <- lc_files[
+    grepl("N39E000", lc_files)
+  ]
+  
+  # ---- Mosaic tiles ----
+  
+  rasters <- lapply(lc_tiles, rast)
+  
+  if (length(rasters) == 1) {
+    lc_raster_bcn <- rasters[[1]]
+  } else {
+    lc_raster_bcn <- do.call(mosaic, rasters)
   }
-)
+  
+  # ---- Crop and mask to study region ----
+  
+  lc_crop_bcn <- terra::crop(lc_raster_bcn, vect(bcn_buffer))
+  lc_mask_bcn <- terra::mask(lc_crop_bcn, vect(bcn_buffer))
+  
+  # ---- Aggregate resolution (dominant class) ----
+  
+  lc_raster_low_bcn <- terra::aggregate(
+    lc_mask_bcn,
+    fact = 25,
+    fun = modal,
+    na.rm = TRUE
+  )
+  
+  # ---- Save aggregated raster ----
+  
+  writeRaster(
+    lc_raster_low_bcn,
+    lc_bcn_file,
+    overwrite = TRUE
+  )
+  
+} else {
+  
+  # ---- Load cached raster ----
+  
+  lc_raster_low_bcn <- rast(lc_bcn_file)
+  
+}
 
-lc_df_bcn <- as.data.frame(lc_raster_low_bcn,xy=TRUE)
+# ---- Convert raster to dataframe ----
+
+lc_df_bcn <- as.data.frame(lc_raster_low_bcn, xy = TRUE)
 
 names(lc_df_bcn)[3] <- "class"
 
-water_df_bcn <- lc_df_bcn %>% filter(class==80)
+# ---- Extract water pixels ----
+
+water_df_bcn <- lc_df_bcn %>%
+  dplyr::filter(class == 80)
 
 
 #18. Map: built-up surface ####
