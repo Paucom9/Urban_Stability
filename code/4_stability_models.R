@@ -152,7 +152,36 @@ results <- list(
 )
 
 
-#6. SEM specification ####
+#6. Standardize SEM variables ####
+
+sem_vars <- c(
+  "community_stability",
+  "species_asynchrony",
+  "wm_population_stability",
+  "shannon_diversity",
+  "FDis",
+  "MPD",
+  "species_richness",
+  "built1000","built2000","built5000",
+  "habdiv1000","habdiv2000","habdiv5000"
+)
+
+results <- purrr::map(
+  results,
+  function(df) {
+    
+    df %>%
+      mutate(
+        across(
+          any_of(sem_vars),
+          \(x) as.numeric(scale(x))
+        )
+      )
+    
+  }
+)
+
+#7. SEM specification ####
 
 sem_template <- function(buffer) {
   
@@ -186,7 +215,7 @@ sem_template <- function(buffer) {
 buffers <- c(1000, 2000, 5000)
 
 
-#7. Run SEMs ####
+#8. Run SEMs ####
 
 sem_results <- expand.grid(
   region = names(results),
@@ -237,7 +266,7 @@ sem_results <- expand.grid(
   )
 
 
-#8. Extract SEM path coefficients ####
+#9. Extract SEM path coefficients ####
 
 
 sem_paths <- sem_results %>%
@@ -259,7 +288,7 @@ write.csv(
 )
 
 
-#9. Prepare data for GLMs ####
+#10. Prepare data for GLMs ####
 
 
 all_cities <- bind_rows(
@@ -280,7 +309,7 @@ all_cities$urban_context <- factor(
 )
 
 
-#10. GLMs ####
+#11. GLMs ####
 
 biodiv_vars <- c(
   "species_richness",
@@ -337,4 +366,3 @@ write.csv(
   ),
   row.names = FALSE
 )
-

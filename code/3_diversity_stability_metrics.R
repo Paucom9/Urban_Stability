@@ -371,12 +371,7 @@ for (r in names(regions)) {
   
   res <- calculate_stability(df, tree)
   
-  # ---- Standardize numeric variables ----
-  
-  res_std <- res %>%
-    mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
-  
   # ---- Save output ----
   
-  write.csv(res_std, cfg$out, row.names = FALSE)
+  write.csv(res, cfg$out, row.names = FALSE)
 }
