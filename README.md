@@ -4,7 +4,7 @@
 
 This repository contains the data and code required to reproduce the analyses presented in:
 
-“Urbanization weakens biodiversity–stability relationships in butterfly communities.”
+“Urbanization weakens the diversity-stability relationship in butterfly communities”
 Colom, P., García-Callejas, D., Schmucki, R., Stefanescu, C., van Swaay, C. & Melero, Y.
 
 The study investigates how urbanization affects the relationship between diversity and ecological stability in butterfly communities across three European metropolitan regions:
@@ -274,23 +274,17 @@ These rasters were used to compute landscape diversity around each butterfly mon
 
 Description
 Region-specific land-cover rasters derived from the ESA WorldCover dataset.
-
 These rasters correspond to spatial subsets of the global ESA WorldCover dataset covering the three metropolitan study regions:
-
 Barcelona metropolitan region (lc_raster_low_bcn)
-
 London metropolitan region (lc_raster_low_lnd)
-
 Randstad region (Netherlands) (lc_raster_low_rnd)
 
 Use in the analysis
 These rasters were used to calculate landscape diversity (Shannon diversity of land-cover classes) within 1000 m, 2000 m, and 5000 m buffers surrounding each monitoring transect. The resulting values are included in:
-
 land_diversity_bcn.csv
-
 land_diversity_lnd.csv
-
 land_diversity_rnd.csv
+
 -------------------------------------------------------------------------------------------------------------
 
   #phylogeny.nwk
