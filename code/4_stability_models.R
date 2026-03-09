@@ -104,7 +104,7 @@ ds$RND <- ds$RND %>%
 
 #4. Load and prepare landscape variables ####
 
-prep_landscape <- function(built, habdiv) {
+prep_landscape <- function(built, landdiv) {
   
   built %>%
     distinct(SITE_ID, .keep_all = TRUE) %>%
@@ -113,7 +113,7 @@ prep_landscape <- function(built, habdiv) {
     ) %>%
     select(-CONTEXT) %>%
     left_join(
-      habdiv %>%
+      landdiv %>%
         distinct(SITE_ID, .keep_all = TRUE) %>%
         select(-CONTEXT),
       by = "SITE_ID"
@@ -162,7 +162,7 @@ sem_vars <- c(
   "MPD",
   "species_richness",
   "built1000","built2000","built5000",
-  "habdiv1000","habdiv2000","habdiv5000"
+  "landdiv1000","landdiv2000","landdiv5000"
 )
 
 results <- map(
@@ -186,17 +186,17 @@ sem_template <- function(buffer) {
   species_asynchrony ~ shannon_diversity + FDis + MPD + species_richness
   wm_population_stability ~ shannon_diversity + FDis + MPD + species_richness
 
-  shannon_diversity ~ species_richness + built', buffer, ' + habdiv', buffer, '
-  MPD ~ species_richness + built', buffer, ' + habdiv', buffer, '
-  FDis ~ species_richness + built', buffer, ' + habdiv', buffer, '
+  shannon_diversity ~ species_richness + built', buffer, ' + landdiv', buffer, '
+  MPD ~ species_richness + built', buffer, ' + landdiv', buffer, '
+  FDis ~ species_richness + built', buffer, ' + landdiv', buffer, '
 
-  species_richness ~ built', buffer, ' + habdiv', buffer, ' + urban_context
+  species_richness ~ built', buffer, ' + landdiv', buffer, ' + urban_context
 
   built', buffer, ' ~ urban_context
-  habdiv', buffer, ' ~ urban_context
+  landdiv', buffer, ' ~ urban_context
 
   species_asynchrony ~~ wm_population_stability
-  built', buffer, ' ~~ habdiv', buffer, '
+  built', buffer, ' ~~ landdiv', buffer, '
   MPD ~~ FDis
   MPD ~~ shannon_diversity
   FDis ~~ shannon_diversity
@@ -222,7 +222,7 @@ sem_results <- expand.grid(
       df <- results[[r]]
       
       built_var  <- paste0("built", b)
-      habdiv_var <- paste0("habdiv", b)
+      landdiv_var <- paste0("landdiv", b)
       
       required_vars <- c(
         "community_stability",
@@ -234,7 +234,7 @@ sem_results <- expand.grid(
         "species_richness",
         "urban_context",
         built_var,
-        habdiv_var
+        landdiv_var
       )
       
       if (!all(required_vars %in% names(df))) {
@@ -245,7 +245,8 @@ sem_results <- expand.grid(
       sem(
         sem_template(b),
         data = df,
-        missing = "fiml"
+        missing = "fiml",
+        em.h1.iter.max = 10000
       )
       
     })
@@ -262,7 +263,6 @@ sem_results <- expand.grid(
 
 
 #9. Extract SEM path coefficients ####
-
 
 sem_paths <- sem_results %>%
   mutate(
@@ -362,7 +362,7 @@ write.csv(
   file.path(
     output_dir,
     "results",
-    "GLM_diversity_stability_interactions.csv"
+    "GLM_diversity_stability_context.csv"
   ),
   row.names = FALSE
 )
