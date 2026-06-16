@@ -1721,3 +1721,285 @@ ggsave(
   bg = "white"
 )
 
+
+#18. Supplementary region-specific raw relationships ####
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+library(cowplot)
+
+dir.create(
+  file.path(output_dir, "figures"),
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+plot_colors <- c(
+  "Urban" = "#D55E00",
+  "Rural" = "#0072B2"
+)
+
+stability_vars <- c(
+  "community_stability",
+  "species_asynchrony",
+  "wm_population_stability"
+)
+
+diversity_vars <- c(
+  "species_richness",
+  "shannon_diversity",
+  "FDis",
+  "MPD"
+)
+
+stability_labels <- c(
+  community_stability = "Community stability",
+  species_asynchrony = "Species asynchrony",
+  wm_population_stability = "Population stability"
+)
+
+diversity_labels <- c(
+  species_richness = "Species richness",
+  shannon_diversity = "Species diversity",
+  FDis = "Functional diversity",
+  MPD = "Phylogenetic diversity"
+)
+
+city_levels <- c("LND", "RND", "BCN")
+
+# RAW VALUES
+plot_data_s18 <- all_cities_check %>%
+  select(
+    city,
+    urban_context,
+    all_of(stability_vars),
+    all_of(diversity_vars)
+  ) %>%
+  pivot_longer(
+    cols = all_of(stability_vars),
+    names_to = "stability_metric",
+    values_to = "stability_value"
+  ) %>%
+  pivot_longer(
+    cols = all_of(diversity_vars),
+    names_to = "diversity_metric",
+    values_to = "diversity_value"
+  ) %>%
+  mutate(
+    city = factor(city, levels = city_levels),
+    urban_context = factor(urban_context, levels = c("Urban", "Rural"))
+  ) %>%
+  filter(
+    !is.na(stability_value),
+    !is.na(diversity_value),
+    !is.na(city),
+    !is.na(urban_context)
+  )
+
+make_s18_panel <- function(stab, div, city_i, show_y, show_x, show_title) {
+  
+  df <- plot_data_s18 %>%
+    filter(
+      stability_metric == stab,
+      diversity_metric == div,
+      city == city_i
+    )
+  
+  ggplot(
+    df,
+    aes(
+      x = diversity_value,
+      y = stability_value,
+      color = urban_context,
+      fill = urban_context
+    )
+  ) +
+    geom_point(
+      alpha = 0.18,
+      size = 0.45
+    ) +
+    geom_smooth(
+      method = "lm",
+      se = TRUE,
+      linewidth = 0.7,
+      alpha = 0.14
+    ) +
+    scale_color_manual(values = plot_colors) +
+    scale_fill_manual(values = plot_colors) +
+    scale_x_continuous(
+      breaks = scales::breaks_width(2)
+    ) +
+    scale_y_continuous(
+      breaks = scales::breaks_width(2)
+    ) +
+    labs(
+      title = if (show_title) as.character(city_i) else NULL,
+      x = if (show_x) diversity_labels[[div]] else NULL,
+      y = if (show_y) stability_labels[[stab]] else NULL
+    ) +
+    theme_classic(
+      base_family = "Garamond",
+      base_size = 12
+    ) +
+    theme(
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        linewidth = 0.4
+      ),
+      axis.line = element_blank(),
+      
+      plot.title = element_text(
+        family = "Garamond",
+        size = 16,
+        hjust = 0.5,
+        margin = margin(b = 4)
+      ),
+      
+      axis.title.x = element_text(
+        family = "Garamond",
+        size = 15,
+        margin = margin(t = 6)
+      ),
+      axis.title.y = element_text(
+        family = "Garamond",
+        size = 15,
+        margin = margin(r = 6)
+      ),
+      
+      axis.text = element_text(
+        family = "Garamond",
+        size = 10
+      ),
+      axis.ticks = element_line(linewidth = 0.25),
+      
+      legend.position = "none",
+      plot.margin = margin(2, 2, 2, 2)
+    )
+}
+
+make_header_plot <- function(label = NULL) {
+  
+  ggplot() +
+    annotate(
+      "text",
+      x = 0.5,
+      y = 0.5,
+      label = label,
+      family = "Garamond",
+      size = 5
+    ) +
+    theme_void() +
+    theme(
+      plot.margin = margin(0, 0, 0, 0)
+    )
+}
+
+make_empty_plot <- function() {
+  ggplot() + theme_void()
+}
+
+# Header row: city names below legend
+header_list <- list()
+
+for (div in diversity_vars) {
+  for (city_i in city_levels) {
+    header_list[[length(header_list) + 1]] <- make_header_plot(city_i)
+  }
+  if (div != diversity_vars[length(diversity_vars)]) {
+    header_list[[length(header_list) + 1]] <- make_empty_plot()
+  }
+}
+
+# Main panels with spacer columns between diversity metrics
+panel_list <- list()
+
+for (stab_i in seq_along(stability_vars)) {
+  
+  stab <- stability_vars[stab_i]
+  
+  for (div in diversity_vars) {
+    
+    for (city_i in city_levels) {
+      
+      panel_list[[length(panel_list) + 1]] <- make_s18_panel(
+        stab = stab,
+        div = div,
+        city_i = city_i,
+        show_y = div == diversity_vars[1] & city_i == city_levels[1],
+        show_x = stab == stability_vars[length(stability_vars)] & city_i == "RND",
+        show_title = FALSE
+      )
+    }
+    
+    if (div != diversity_vars[length(diversity_vars)]) {
+      panel_list[[length(panel_list) + 1]] <- make_empty_plot()
+    }
+  }
+}
+
+legend_plot <- ggplot(
+  plot_data_s18,
+  aes(
+    x = diversity_value,
+    y = stability_value,
+    color = urban_context,
+    fill = urban_context
+  )
+) +
+  geom_smooth(
+    method = "lm",
+    se = TRUE,
+    linewidth = 0.7,
+    alpha = 0.14
+  ) +
+  scale_color_manual(values = plot_colors) +
+  scale_fill_manual(values = plot_colors) +
+  theme_void(base_family = "Garamond") +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(
+      family = "Garamond",
+      size = 12
+    )
+  )
+
+legend_only <- cowplot::get_legend(legend_plot)
+
+header_row <- wrap_plots(
+  header_list,
+  ncol = 15,
+  widths = c(1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1)
+)
+
+panel_grid <- wrap_plots(
+  panel_list,
+  ncol = 15,
+  widths = c(1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1)
+)
+
+fig_s18_raw_region_relationships <- 
+  cowplot::ggdraw(legend_only) /
+  header_row /
+  panel_grid +
+  plot_layout(
+    heights = c(0.35, 0.25, 6)
+  )
+
+fig_s18_raw_region_relationships
+
+ggsave(
+  filename = file.path(
+    output_dir,
+    "figures",
+    "Fig_SM.png"
+  ),
+  plot = fig_s18_raw_region_relationships,
+  width = 16,
+  height = 8,
+  dpi = 600,
+  bg = "white"
+)
