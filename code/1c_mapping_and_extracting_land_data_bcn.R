@@ -170,64 +170,86 @@ df_cbms <- df_cbms %>%
 #8. Load transect coordinates ####
 
 m_coord_ubms <- read.csv(
-  file.path(input_dir,"data","ubms_sites.csv"),
-  sep=";"
+  file.path(input_dir, "data", "ubms_sites.csv"),
+  sep = ";"
 )
-
-m_coord_ubms_clean <- na.exclude(m_coord_ubms)
 
 m_coord_cbms <- read.csv(
-  file.path(input_dir,"data","coord_length_transects_CBMS.csv"),
-  sep=";"
+  file.path(input_dir, "data", "coord_length_transects_CBMS.csv"),
+  sep = ";"
 )
 
+# Clean uBMS coordinates and IDs BEFORE creating sf object
+m_coord_ubms_clean <- m_coord_ubms %>%
+  dplyr::filter(
+    !is.na(transect_longitude),
+    !is.na(transect_latitude)
+  ) %>%
+  dplyr::filter(
+    !stringr::str_detect(transect_id, "_A$")
+  ) %>%
+  dplyr::mutate(
+    transect_id = stringr::str_remove(transect_id, "_T$")
+  )
+
+# Clean CBMS IDs
 m_coord_cbms <- m_coord_cbms %>%
-  mutate(transect_id=paste0("ES-CTBMS.",SITE_ID))
-
-m_coord_ubms$transect_id <- substr(
-  m_coord_ubms$transect_id,
-  1,
-  nchar(m_coord_ubms$transect_id)-2
-)
+  dplyr::mutate(
+    transect_id = paste0("ES-CTBMS.", SITE_ID)
+  )
 
 
-#9. Convert coordinates to sf ####
+#9. Convert uBMS coordinates to sf ####
 
-ubms_sf <- st_as_sf(
+ubms_sf <- sf::st_as_sf(
   m_coord_ubms_clean,
-  coords=c("transect_longitude","transect_latitude"),
-  crs=4326
+  coords = c("transect_longitude", "transect_latitude"),
+  crs = 4326
 )
 
-ubms_sf_3035 <- st_transform(ubms_sf,3035)
+ubms_sf_3035 <- sf::st_transform(ubms_sf, 3035)
 
-coords_3035 <- st_coordinates(ubms_sf_3035)
+coords_3035 <- sf::st_coordinates(ubms_sf_3035)
 
-ubms_sf_3035$transect_lon <- coords_3035[,1]
-ubms_sf_3035$transect_lat <- coords_3035[,2]
+ubms_sf_3035$transect_lon <- coords_3035[, 1]
+ubms_sf_3035$transect_lat <- coords_3035[, 2]
 
 
 #10. Merge CBMS and uBMS transects ####
 
 cbms_df <- m_coord_cbms %>%
-  mutate(source="CBMS") %>%
-  select(transect_id,transect_length,transect_lon,transect_lat,source)
+  dplyr::mutate(source = "CBMS") %>%
+  dplyr::select(
+    transect_id,
+    transect_length,
+    transect_lon,
+    transect_lat,
+    source
+  )
 
 ubms_df <- ubms_sf_3035 %>%
-  st_drop_geometry() %>%
-  mutate(source="uBMS") %>%
-  select(transect_id,transect_length,transect_lon,transect_lat,source)
+  sf::st_drop_geometry() %>%
+  dplyr::mutate(source = "uBMS") %>%
+  dplyr::select(
+    transect_id,
+    transect_length,
+    transect_lon,
+    transect_lat,
+    source
+  )
 
-merged_transects <- bind_rows(cbms_df,ubms_df)
-
-m_coord_sf <- st_as_sf(
-  merged_transects,
-  coords=c("transect_lon","transect_lat"),
-  crs=3035
+merged_transects <- dplyr::bind_rows(
+  cbms_df,
+  ubms_df
 )
 
-m_coord_sf_wgs <- st_transform(m_coord_sf,4326)
+m_coord_sf <- sf::st_as_sf(
+  merged_transects,
+  coords = c("transect_lon", "transect_lat"),
+  crs = 3035
+)
 
+m_coord_sf_wgs <- sf::st_transform(m_coord_sf, 4326)
 
 #11. Get Barcelona boundary ####
 
