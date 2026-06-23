@@ -2,9 +2,12 @@
 # Piecewise SEMs for BCN / LND / RND
 # Data loading + regional standardization + sequentially residualized diversity metrics
 # MEM-only spatial correction + no urban_context in the pSEM
-# v9: treats species_richness as an exogenous diversity predictor
-#     (richness is kept in stability equations, but is not modelled as a response)
-#     minimum covariance structure: removes species_richness %~~% FDis_resid
+# v11: treats species_richness as an endogenous response to landscape structure
+#      but fits the richness equation with spatial GLS instead of MEMs:
+#      gls(species_richness ~ built_buffer + landdiv_buffer, corExp)
+#      Other component equations use MEM-only spatial correction as before.
+#      Minimum covariance structure: built_buffer %~~% landdiv_buffer and
+#      species_asynchrony %~~% wm_population_stability
 # pSEM for 1000, 2000, 5000 m
 # ============================================================================ #
 
@@ -30,6 +33,7 @@ library(sf)
 library(piecewiseSEM)
 library(spdep)
 library(adespatial)
+library(nlme)
 
 # --------------------------------------------------------------------------- #
 # 2. Folders and settings
@@ -38,7 +42,7 @@ library(adespatial)
 input_dir   <- here("input", "data")
 output_dir  <- here("output")
 data_dir    <- file.path(output_dir, "data")
-results_dir <- file.path(output_dir, "results", "pSEM_piecewise_all_regions_MEM_noUrbanContext_richnessExogenous_minCov_v9")
+results_dir <- file.path(output_dir, "results", "pSEM_piecewise_all_regions_MEM_noUrbanContext_richnessEndogenous_GLSrichness_v11c")
 
 dir.create(
   results_dir,
@@ -52,7 +56,12 @@ buffers <- c(1000, 2000, 5000)
 max_mem     <- 120
 k_neigh     <- 8
 alpha_moran <- 0.05
-max_select  <- 70
+max_select  <- 90
+
+# v11 setting: use GLS spatial correlation for the species richness equation.
+# This is intended to avoid over-parameterizing the Randstad richness equation
+# with many MEMs while still modelling the ecological path BS/LD -> SR.
+use_gls_for_richness <- TRUE
 
 # --------------------------------------------------------------------------- #
 # 3. Helper functions: IDs, data loading, coordinates
@@ -440,23 +449,42 @@ signif_code <- function(p) {
 extract_lm_path_coefs <- function(mod, model_data, response, region, buffer,
                                   built_var, landdiv_var) {
   
-  coef_mat <- summary(mod)$coefficients
+  # Works for both lm() and nlme::gls() component models.
+  # For gls(), coefficients are stored in summary(mod)$tTable.
+  # For lm(), coefficients are stored in summary(mod)$coefficients.
+  if (inherits(mod, "gls")) {
+    coef_mat <- summary(mod)$tTable
+    coef_tbl <- as.data.frame(coef_mat, check.names = FALSE) %>%
+      tibble::rownames_to_column("Predictor") %>%
+      dplyr::rename(
+        Estimate = Value,
+        Std.Error = Std.Error,
+        Crit.Value = `t-value`,
+        P.Value = `p-value`
+      ) %>%
+      dplyr::mutate(
+        DF = mod$dims$N - length(stats::coef(mod))
+      )
+  } else {
+    coef_mat <- summary(mod)$coefficients
+    coef_tbl <- as.data.frame(coef_mat, check.names = FALSE) %>%
+      tibble::rownames_to_column("Predictor") %>%
+      dplyr::rename(
+        Estimate = Estimate,
+        Std.Error = `Std. Error`,
+        Crit.Value = `t value`,
+        P.Value = `Pr(>|t|)`
+      ) %>%
+      dplyr::mutate(
+        DF = stats::df.residual(mod)
+      )
+  }
   
-  if (is.null(coef_mat) || nrow(coef_mat) == 0) {
+  if (is.null(coef_tbl) || nrow(coef_tbl) == 0) {
     return(tibble::tibble())
   }
   
-  coef_tbl <- as.data.frame(coef_mat, check.names = FALSE) %>%
-    tibble::rownames_to_column("Predictor") %>%
-    dplyr::rename(
-      Estimate = Estimate,
-      Std.Error = `Std. Error`,
-      Crit.Value = `t value`,
-      P.Value = `Pr(>|t|)`
-    ) %>%
-    dplyr::mutate(
-      DF = stats::df.residual(mod)
-    ) %>%
+  coef_tbl <- coef_tbl %>%
     dplyr::filter(Predictor != "(Intercept)")
   
   if (nrow(coef_tbl) == 0) {
@@ -487,7 +515,7 @@ extract_lm_path_coefs <- function(mod, model_data, response, region, buffer,
       built_var = built_var,
       landdiv_var = landdiv_var,
       signif = signif_code(P.Value),
-      extraction = "manual_lm"
+      extraction = ifelse(inherits(mod, "gls"), "manual_gls", "manual_lm")
     ) %>%
     dplyr::select(
       region,
@@ -543,15 +571,15 @@ extract_correlated_error <- function(mod1, mod2, response1, response2,
 extract_raw_correlation <- function(model_data, var1, var2,
                                     region, buffer, built_var, landdiv_var) {
   ok <- stats::complete.cases(model_data[[var1]], model_data[[var2]])
-
+  
   if (sum(ok) < 4) {
     return(tibble::tibble())
   }
-
+  
   ct <- stats::cor.test(model_data[[var1]][ok], model_data[[var2]][ok])
   est <- unname(ct$estimate)
   pval <- ct$p.value
-
+  
   tibble::tibble(
     region = region,
     buffer = buffer,
@@ -572,7 +600,7 @@ extract_raw_correlation <- function(model_data, var1, var2,
 
 extract_component_path_coefs <- function(component_models, model_data, region,
                                          buffer, built_var, landdiv_var) {
-
+  
   path_coefs <- purrr::imap_dfr(
     component_models,
     function(mod, response) {
@@ -587,40 +615,13 @@ extract_component_path_coefs <- function(component_models, model_data, region,
       )
     }
   )
-
+  
   correlated_errors <- dplyr::bind_rows(
     extract_correlated_error(
       mod1 = component_models$species_asynchrony,
       mod2 = component_models$wm_population_stability,
       response1 = "species_asynchrony",
       response2 = "wm_population_stability",
-      region = region,
-      buffer = buffer,
-      built_var = built_var,
-      landdiv_var = landdiv_var
-    ),
-    extract_raw_correlation(
-      model_data = model_data,
-      var1 = "species_richness",
-      var2 = "built_buffer",
-      region = region,
-      buffer = buffer,
-      built_var = built_var,
-      landdiv_var = landdiv_var
-    ),
-    extract_raw_correlation(
-      model_data = model_data,
-      var1 = "species_richness",
-      var2 = "landdiv_buffer",
-      region = region,
-      buffer = buffer,
-      built_var = built_var,
-      landdiv_var = landdiv_var
-    ),
-    extract_raw_correlation(
-      model_data = model_data,
-      var1 = "species_richness",
-      var2 = "FDis_resid",
       region = region,
       buffer = buffer,
       built_var = built_var,
@@ -636,7 +637,7 @@ extract_component_path_coefs <- function(component_models, model_data, region,
       landdiv_var = landdiv_var
     )
   )
-
+  
   dplyr::bind_rows(path_coefs, correlated_errors)
 }
 
@@ -730,6 +731,116 @@ moran_lm <- function(df, response, predictors, listw) {
   })
   
   out
+}
+
+
+fit_richness_gls <- function(df, predictors = c("built_buffer", "landdiv_buffer")) {
+  
+  f <- make_formula("species_richness", predictors)
+  
+  # Use scaled coordinates to avoid numerical issues with projected metres.
+  if (!all(c("x_gls", "y_gls") %in% names(df))) {
+    df <- df %>%
+      dplyr::mutate(
+        x_gls = as.numeric(scale(x_dbmem)),
+        y_gls = as.numeric(scale(y_dbmem))
+      )
+  }
+  
+  fit <- tryCatch(
+    nlme::gls(
+      f,
+      data = df,
+      correlation = nlme::corExp(
+        form = ~ x_gls + y_gls,
+        nugget = TRUE
+      ),
+      method = "ML",
+      control = nlme::glsControl(
+        msMaxIter = 200,
+        msVerbose = FALSE,
+        returnObject = TRUE
+      )
+    ),
+    error = function(e1) {
+      warning(
+        "corExp GLS failed for species_richness: ", e1$message,
+        ". Trying corGaus."
+      )
+      tryCatch(
+        nlme::gls(
+          f,
+          data = df,
+          correlation = nlme::corGaus(
+            form = ~ x_gls + y_gls,
+            nugget = TRUE
+          ),
+          method = "ML",
+          control = nlme::glsControl(
+            msMaxIter = 200,
+            msVerbose = FALSE,
+            returnObject = TRUE
+          )
+        ),
+        error = function(e2) {
+          warning(
+            "corGaus GLS also failed for species_richness: ", e2$message,
+            ". Falling back to lm()."
+          )
+          stats::lm(f, data = df)
+        }
+      )
+    }
+  )
+  
+  fit
+}
+
+moran_model_residuals <- function(mod, listw, response = NA_character_) {
+  
+  res <- tryCatch(
+    {
+      if (inherits(mod, "gls")) {
+        stats::residuals(mod, type = "normalized")
+      } else {
+        stats::residuals(mod)
+      }
+    },
+    error = function(e) stats::residuals(mod)
+  )
+  
+  out <- tryCatch({
+    mt <- spdep::moran.test(
+      res,
+      listw,
+      zero.policy = TRUE,
+      alternative = "greater"
+    )
+    tibble::tibble(
+      response = response,
+      moran_I = unname(mt$estimate[["Moran I statistic"]]),
+      moran_p = mt$p.value,
+      n = length(res)
+    )
+  }, error = function(e) {
+    tibble::tibble(
+      response = response,
+      moran_I = NA_real_,
+      moran_p = NA_real_,
+      n = length(res)
+    )
+  })
+  
+  out
+}
+
+moran_gls_richness <- function(df, predictors, listw) {
+  mod <- fit_richness_gls(df, predictors = predictors)
+  moran_model_residuals(
+    mod = mod,
+    listw = listw,
+    response = "species_richness"
+  )
 }
 
 select_mems_for_equation <- function(df, response, predictors, mem_candidates,
@@ -848,11 +959,10 @@ sem_base_vars <- c(
 #   MPD_resid        = phylogenetic diversity independent of richness, residual Shannon,
 #                      and residual functional diversity
 #
-# This keeps richness as an explicit exogenous diversity predictor of stability,
-# while the three residualized diversity variables represent non-richness
-# components. Richness is not modelled as a response in the pSEM because the
-# RND richness equation retained strong residual spatial autocorrelation in
-# previous tests.
+# This keeps richness as an explicit diversity predictor of stability, while
+# the three residualized diversity variables represent non-richness components.
+# In v10, richness is modelled as an endogenous response to landscape structure
+# to retain the ecological pathway landscape -> richness -> stability.
 
 residualize_diversity_vars <- function(df) {
   
@@ -965,7 +1075,7 @@ prepare_region_sem_data <- function(region, sem_raw) {
 calc_fisher_from_pvalues <- function(p_values) {
   p_values <- suppressWarnings(as.numeric(p_values))
   p_values <- p_values[!is.na(p_values) & p_values > 0]
-
+  
   if (length(p_values) == 0) {
     return(
       tibble::tibble(
@@ -976,11 +1086,11 @@ calc_fisher_from_pvalues <- function(p_values) {
       )
     )
   }
-
+  
   fisher_c <- -2 * sum(log(p_values))
   fisher_df <- 2 * length(p_values)
   fisher_p <- stats::pchisq(fisher_c, df = fisher_df, lower.tail = FALSE)
-
+  
   tibble::tibble(
     Fisher.C = fisher_c,
     df = fisher_df,
@@ -990,7 +1100,7 @@ calc_fisher_from_pvalues <- function(p_values) {
 }
 
 extract_dsep_tables <- function(psem_fit, region, buffer) {
-
+  
   dsep_full <- tryCatch(
     piecewiseSEM::dSep(psem_fit) %>%
       clean_empty_names() %>%
@@ -1007,7 +1117,7 @@ extract_dsep_tables <- function(psem_fit, region, buffer) {
       )
     }
   )
-
+  
   if (!"Independ.Claim" %in% names(dsep_full)) {
     return(
       list(
@@ -1025,7 +1135,7 @@ extract_dsep_tables <- function(psem_fit, region, buffer) {
       )
     )
   }
-
+  
   # MEMs are nuisance spatial covariates. For an ecological fit diagnostic,
   # we remove d-separation claims where the tested independence relationship
   # directly involves a MEM variable. The remaining claims still come from the
@@ -1036,7 +1146,7 @@ extract_dsep_tables <- function(psem_fit, region, buffer) {
       !stringr::str_detect(Independ.Claim, "\\bMEM[0-9]+\\b")
     ) %>%
     dplyr::mutate(fisher_type = "ecological_dSep_excluding_MEM_claims")
-
+  
   fisher_ecological <- calc_fisher_from_pvalues(dsep_ecological$P.Value) %>%
     dplyr::mutate(
       region = region,
@@ -1044,7 +1154,7 @@ extract_dsep_tables <- function(psem_fit, region, buffer) {
       fisher_type = "ecological_dSep_excluding_MEM_claims",
       .before = 1
     )
-
+  
   list(
     dsep_full = dsep_full,
     dsep_ecological = dsep_ecological,
@@ -1053,13 +1163,13 @@ extract_dsep_tables <- function(psem_fit, region, buffer) {
 }
 
 # --------------------------------------------------------------------------- #
- # 7. Function to run pSEM for one region and one buffer
+# 7. Function to run pSEM for one region and one buffer
 # --------------------------------------------------------------------------- #
 
 run_region_psem_buffer <- function(region, buffer, data_resid,
                                    max_mem = 40, k_neigh = 8,
                                    alpha = 0.05, max_select = 30,
-                                   small_n_mem_fraction = 0.20,
+                                   small_n_mem_fraction = 0.25,
                                    min_resid_df = 8) {
   
   message("\n============================================================")
@@ -1117,6 +1227,10 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
       x_col = "x",
       y_col = "y",
       amount = 1
+    ) %>%
+    dplyr::mutate(
+      x_gls = as.numeric(scale(x_dbmem)),
+      y_gls = as.numeric(scale(y_dbmem))
     )
   
   message("N complete-case sites used in pSEM: ", nrow(df_psem))
@@ -1125,10 +1239,11 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
     warning("Very few sites for ", region, " buffer ", buffer, ". Results may be unstable.")
   }
   
-  # Small regions such as BCN have few sites. Allowing up to 30 MEMs can
+  # Small regions such as BCN have few sites. Allowing too many MEMs can
   # quasi-saturate the component lm() models and make piecewiseSEM fail when
   # it builds the d-separation tests. This cap keeps spatial filtering useful
-  # but prevents overfitting.
+  # but prevents overfitting. In v10 the richness equation may need more MEMs,
+  # especially in RND, so the fraction cap is slightly more permissive than in v9.
   sample_size_cap <- max(
     0,
     floor(nrow(df_psem) * small_n_mem_fraction)
@@ -1166,6 +1281,7 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
   # urban_context is kept in the data only for site diagnostics, but it is not
   # included in the pSEM. The urban/rural contrast is tested in the main GLMs.
   # Here, the pSEM focuses on continuous landscape-mediated pathways.
+  # In v10, richness is modelled as a response to landscape structure.
   eqs <- list(
     species_asynchrony = c(
       "species_richness",
@@ -1175,7 +1291,7 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
       "built_buffer",
       "landdiv_buffer"
     ),
-
+    
     wm_population_stability = c(
       "species_richness",
       "shannon_resid",
@@ -1184,23 +1300,28 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
       "built_buffer",
       "landdiv_buffer"
     ),
-
+    
+    species_richness = c(
+      "built_buffer",
+      "landdiv_buffer"
+    ),
+    
     shannon_resid = c(
       "built_buffer",
       "landdiv_buffer"
     ),
-
+    
     FDis_resid = c(
       "built_buffer",
       "landdiv_buffer"
     ),
-
+    
     MPD_resid = c(
       "built_buffer",
       "landdiv_buffer"
     )
   )
-
+  
   all_model_vars <- unique(c(names(eqs), unlist(eqs)))
   missing_model_vars <- setdiff(all_model_vars, names(df_psem))
   
@@ -1259,6 +1380,39 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
     preds <- eqs[[resp]]
     this_max_select <- max_select_for_response(resp)
     
+    if (resp == "species_richness" && use_gls_for_richness) {
+      message(
+        "Using spatial GLS for ", resp,
+        " | no MEM selection for this equation"
+      )
+      
+      initial_richness <- moran_lm(
+        df = df_psem,
+        response = resp,
+        predictors = preds,
+        listw = listw
+      )
+      
+      final_richness <- moran_gls_richness(
+        df = df_psem,
+        predictors = preds,
+        listw = listw
+      )
+      
+      mem_selection_list[[resp]] <- tibble::tibble(
+        response = resp,
+        selected_mems = "",
+        n_mems = 0,
+        initial_moran_I = initial_richness$moran_I,
+        initial_moran_p = initial_richness$moran_p,
+        final_moran_I = final_richness$moran_I,
+        final_moran_p = final_richness$moran_p,
+        spatial_method = "GLS_corExp_or_fallback",
+        max_mems_allowed = 0
+      )
+      next
+    }
+    
     message(
       "Selecting MEMs for ", resp,
       " | max allowed = ", this_max_select
@@ -1273,7 +1427,10 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
       alpha = alpha,
       max_select = this_max_select
     ) %>%
-      dplyr::mutate(max_mems_allowed = this_max_select)
+      dplyr::mutate(
+        spatial_method = "MEM",
+        max_mems_allowed = this_max_select
+      )
   }
   
   mem_selection <- dplyr::bind_rows(mem_selection_list) %>%
@@ -1327,6 +1484,34 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
     data = df_psem
   )
   
+  if (use_gls_for_richness) {
+    m_richness <- fit_richness_gls(
+      df = df_psem,
+      predictors = eqs$species_richness
+    )
+    
+    # IMPORTANT: fit_richness_gls() is a helper function, so the original
+    # gls call stores local helper objects (e.g. data = df, model = f).
+    # piecewiseSEM later re-evaluates the model call to recover model data.
+    # A local object such as `df_psem` is not visible when pSEM/dSep/coefs
+    # later re-evaluate the gls call, so we store a unique copy in .GlobalEnv
+    # and patch the gls call to point to that stable object.
+    gls_data_name <- paste0(".psem_gls_data_", region, "_", buffer)
+    assign(gls_data_name, df_psem, envir = .GlobalEnv)
+    
+    m_richness$call$model <- make_formula(
+      "species_richness",
+      eqs$species_richness,
+      env = .GlobalEnv
+    )
+    m_richness$call$data <- as.name(gls_data_name)
+  } else {
+    m_richness <- lm(
+      make_formula("species_richness", eqs_spatial$species_richness, env = model_env),
+      data = df_psem
+    )
+  }
+  
   m_shannon <- lm(
     make_formula("shannon_resid", eqs_spatial$shannon_resid, env = model_env),
     data = df_psem
@@ -1349,12 +1534,11 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
   psem_fit <- piecewiseSEM::psem(
     m_async,
     m_pop,
+    m_richness,
     m_shannon,
     m_fdis,
     m_mpd,
     species_asynchrony %~~% wm_population_stability,
-    species_richness %~~% built_buffer,
-    species_richness %~~% landdiv_buffer,
     built_buffer %~~% landdiv_buffer,
     data = df_psem
   )
@@ -1369,12 +1553,21 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
     preds <- eqs[[resp]]
     extra <- spatial_terms_list[[resp]]
     if (is.null(extra)) extra <- character(0)
-    moran_after_list[[resp]] <- moran_lm(
-      df = df_psem,
-      response = resp,
-      predictors = c(preds, extra),
-      listw = listw
-    )
+    
+    if (resp == "species_richness" && use_gls_for_richness) {
+      moran_after_list[[resp]] <- moran_model_residuals(
+        mod = m_richness,
+        listw = listw,
+        response = resp
+      )
+    } else {
+      moran_after_list[[resp]] <- moran_lm(
+        df = df_psem,
+        response = resp,
+        predictors = c(preds, extra),
+        listw = listw
+      )
+    }
   }
   
   moran_after <- dplyr::bind_rows(moran_after_list) %>%
@@ -1400,6 +1593,7 @@ run_region_psem_buffer <- function(region, buffer, data_resid,
   component_models <- list(
     species_asynchrony = m_async,
     wm_population_stability = m_pop,
+    species_richness = m_richness,
     shannon_resid = m_shannon,
     FDis_resid = m_fdis,
     MPD_resid = m_mpd
@@ -1706,6 +1900,8 @@ psem_paths_wide <- psem_coefs_clean_all %>%
   arrange(region, path)
 
 main_paths <- c(
+  "species_richness <- built_buffer",
+  "species_richness <- landdiv_buffer",
   "shannon_resid <- built_buffer",
   "shannon_resid <- landdiv_buffer",
   "FDis_resid <- built_buffer",
@@ -1725,8 +1921,6 @@ main_paths <- c(
   "wm_population_stability <- built_buffer",
   "wm_population_stability <- landdiv_buffer",
   "~~species_asynchrony <- ~~wm_population_stability",
-  "~~species_richness <- ~~built_buffer",
-  "~~species_richness <- ~~landdiv_buffer",
   "~~built_buffer <- ~~landdiv_buffer"
 )
 
@@ -1884,5 +2078,5 @@ print(psem_key_paths, n = 300)
 message("\n================ MAIN PATHS ACROSS BUFFERS ================")
 print(psem_main_paths_wide, n = 300)
 
-message("\n==== All-region pSEM analysis complete: richness exogenous minimum covariance v9 ====")
+message("\n==== All-region pSEM analysis complete: richness endogenous with GLS richness v11 ====")
 message("Outputs saved in: ", results_dir)
