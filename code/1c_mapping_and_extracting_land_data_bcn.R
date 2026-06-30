@@ -99,78 +99,39 @@ df_full <- df_full %>%
 
 #5. Expand species–site–year combinations ####
 
-site_years <- df_full %>%
-  distinct(SITE_ID, YEAR)
+site_years <- df_full %>% distinct(SITE_ID,YEAR)
 
 species_sites <- df_full %>%
-  group_by(SITE_ID, SPECIES) %>%
-  summarise(
-    ever_present = any(SINDEX > 0, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
+  group_by(SITE_ID,SPECIES) %>%
+  summarise(ever_present = any(SINDEX>0,na.rm=TRUE),.groups="drop") %>%
   filter(ever_present) %>%
   dplyr::select(-ever_present)
 
-expanded <- species_sites %>%
-  left_join(
-    site_years,
-    by = "SITE_ID",
-    relationship = "many-to-many"
-  )
+expanded <- species_sites %>% left_join(site_years,by="SITE_ID")
 
 df_expanded <- expanded %>%
-  left_join(
-    df_full,
-    by = c("SITE_ID", "SPECIES", "YEAR")
-  ) %>%
-  mutate(
-    SINDEX = ifelse(is.na(SINDEX), 0, SINDEX)
-  )
-
-# Recover site-level information after zero-filling
-site_info <- df_full %>%
-  dplyr::select(SITE_ID, SCHEME, transect_length) %>%
-  distinct()
-
-df_expanded <- df_expanded %>%
-  left_join(
-    site_info,
-    by = "SITE_ID",
-    suffix = c("", ".siteinfo")
-  ) %>%
-  mutate(
-    SCHEME = coalesce(SCHEME, SCHEME.siteinfo),
-    transect_length = coalesce(transect_length, transect_length.siteinfo)
-  ) %>%
-  dplyr::select(-ends_with(".siteinfo"))
-
-df_expanded_clean <- df_expanded %>%
-  filter(!is.na(SPECIES)) %>%
-  filter(!str_detect(SPECIES, "sp\\.?\\s*$")) %>%
-  filter(str_count(SPECIES, "\\s+") > 0)
+  left_join(df_full,by=c("SITE_ID","SPECIES","YEAR")) %>%
+  mutate(SINDEX = ifelse(is.na(SINDEX),0,SINDEX))
 
 
 #6. Filter uBMS sites ####
 
-df_ubms <- df_expanded_clean %>%
-  filter(SCHEME == "uBMS")
+df_ubms <- df_expanded %>% filter(SCHEME=="uBMS")
 
 ubms_visits <- ubms_visits %>%
-  filter(!grepl("_A$", transect_id)) %>%
-  mutate(
-    transect_id = gsub("_T", "", transect_id)
-  )
+  filter(!grepl("_A$",transect_id)) %>%
+  mutate(transect_id=gsub("_T","",transect_id))
 
 visit_counts <- ubms_visits %>%
-  group_by(transect_id, year) %>%
-  summarise(n_visits = n(), .groups = "drop") %>%
-  rename(SITE_ID = transect_id)
+  group_by(transect_id,year) %>%
+  summarise(n_visits=n(),.groups="drop") %>%
+  rename(SITE_ID=transect_id)
 
 good_sites <- visit_counts %>%
-  filter(n_visits >= 10) %>%
+  filter(n_visits>=10) %>%
   group_by(SITE_ID) %>%
-  summarise(years_10visits = n(), .groups = "drop") %>%
-  filter(years_10visits >= 5)
+  summarise(years_10visits=n()) %>%
+  filter(years_10visits>=5)
 
 df_ubms_filtered <- df_ubms %>%
   filter(SITE_ID %in% good_sites$SITE_ID)
@@ -178,34 +139,32 @@ df_ubms_filtered <- df_ubms %>%
 
 #7. Filter CBMS sites ####
 
-df_cbms <- df_expanded_clean %>%
-  filter(SCHEME == "CBMS")
+df_cbms <- df_expanded_clean %>% filter(SCHEME=="CBMS")
 
 df_cbms <- df_cbms %>%
-  mutate(
-    SITE_ID_num = as.numeric(as.character(SITE_ID)),
-    SINDEX_std = SINDEX * 1000 / transect_length
-  )
+  mutate(SINDEX_std = SINDEX * 1000 / transect_length)
 
-balearic_sites <- c(60, 61, 101, 145, 146, 155, 170, 171, 173)
+balearic_sites <- c(60,61,101,145,146,155,170,171,173)
+
+df_cbms <- df_cbms %>%
+  filter(!SITE_ID %in% balearic_sites)
 
 valid_sites <- c(
-  8, 21, 26, 29, 33, 34, 40, 58, 68, 69, 75, 76, 80, 83, 88, 89,
-  95, 106, 107, 108, 114, 118, 120, 121, 128, 129, 134, 135, 136,
-  147, 148, 149, 150, 152, 157, 158, 159, 161, 174, 175, 178, 179,
-  184, 191, 192, 196, 213, 223, 226, 230, 233, 234, 237, 238, 239
+  8,21,26,29,33,34,40,58,68,69,75,76,80,83,88,89,95,106,107,108,
+  114,118,120,121,128,129,134,135,136,147,148,149,150,152,157,158,
+  159,161,174,175,178,179,184,191,192,196,213,223,226,230,233,234,
+  237,238,239
 )
 
+df_cbms <- df_cbms %>% filter(SITE_ID %in% valid_sites)
+
 df_cbms <- df_cbms %>%
-  filter(!SITE_ID_num %in% balearic_sites) %>%
-  filter(SITE_ID_num %in% valid_sites) %>%
-  group_by(SITE_ID_num) %>%
-  filter(n_distinct(YEAR) >= 6) %>%
-  ungroup() %>%
-  mutate(
-    SITE_ID = paste0("ES-CTBMS.", SITE_ID_num)
-  ) %>%
-  dplyr::select(-SITE_ID_num)
+  group_by(SITE_ID) %>%
+  filter(n_distinct(YEAR)>=6) %>%
+  ungroup()
+
+df_cbms <- df_cbms %>%
+  mutate(SITE_ID=paste0("ES-CTBMS.",SITE_ID))
 
 
 #8. Load transect coordinates ####
@@ -220,54 +179,30 @@ m_coord_cbms <- read.csv(
   sep = ";"
 )
 
+# Clean uBMS coordinates and IDs BEFORE creating sf object
 m_coord_ubms_clean <- m_coord_ubms %>%
-  filter(
+  dplyr::filter(
     !is.na(transect_longitude),
     !is.na(transect_latitude)
   ) %>%
-  filter(
-    !str_detect(transect_id, "_A$")
+  dplyr::filter(
+    !stringr::str_detect(transect_id, "_A$")
   ) %>%
-  mutate(
-    transect_id = str_remove(transect_id, "_T$")
+  dplyr::mutate(
+    transect_id = stringr::str_remove(transect_id, "_T$")
   )
 
+# Clean CBMS IDs
 m_coord_cbms <- m_coord_cbms %>%
-  mutate(
+  dplyr::mutate(
     transect_id = paste0("ES-CTBMS.", SITE_ID)
   )
-
-
-#8b. Keep only sites used in the diversity/stability analyses ####
-
-cbms_sites_keep <- df_cbms %>%
-  distinct(SITE_ID) %>%
-  pull(SITE_ID)
-
-ubms_sites_keep <- df_ubms_filtered %>%
-  distinct(SITE_ID) %>%
-  pull(SITE_ID)
-
-cat("\n==== Sites to keep for BCN landscape extraction ====\n")
-cat("CBMS:", length(cbms_sites_keep), "\n")
-cat("uBMS:", length(ubms_sites_keep), "\n")
-
-m_coord_cbms_filtered <- m_coord_cbms %>%
-  filter(transect_id %in% cbms_sites_keep)
-
-m_coord_ubms_clean_filtered <- m_coord_ubms_clean %>%
-  filter(transect_id %in% ubms_sites_keep) %>%
-  distinct(transect_id, .keep_all = TRUE)
-
-cat("\n==== Coordinates retained after filtering ====\n")
-cat("CBMS coords:", nrow(m_coord_cbms_filtered), "\n")
-cat("uBMS coords:", nrow(m_coord_ubms_clean_filtered), "\n")
 
 
 #9. Convert uBMS coordinates to sf ####
 
 ubms_sf <- sf::st_as_sf(
-  m_coord_ubms_clean_filtered,
+  m_coord_ubms_clean,
   coords = c("transect_longitude", "transect_latitude"),
   crs = 4326
 )
@@ -282,8 +217,8 @@ ubms_sf_3035$transect_lat <- coords_3035[, 2]
 
 #10. Merge CBMS and uBMS transects ####
 
-cbms_df <- m_coord_cbms_filtered %>%
-  mutate(source = "CBMS") %>%
+cbms_df <- m_coord_cbms %>%
+  dplyr::mutate(source = "CBMS") %>%
   dplyr::select(
     transect_id,
     transect_length,
@@ -293,8 +228,8 @@ cbms_df <- m_coord_cbms_filtered %>%
   )
 
 ubms_df <- ubms_sf_3035 %>%
-  st_drop_geometry() %>%
-  mutate(source = "uBMS") %>%
+  sf::st_drop_geometry() %>%
+  dplyr::mutate(source = "uBMS") %>%
   dplyr::select(
     transect_id,
     transect_length,
@@ -303,19 +238,18 @@ ubms_df <- ubms_sf_3035 %>%
     source
   )
 
-merged_transects <- bind_rows(
+merged_transects <- dplyr::bind_rows(
   cbms_df,
   ubms_df
-) %>%
-  filter(
-    !is.na(transect_lon),
-    !is.na(transect_lat)
-  )
+)
 
-cat("\n==== Final transects for landscape extraction ====\n")
-merged_transects %>%
-  count(source) %>%
-  print()
+m_coord_sf <- sf::st_as_sf(
+  merged_transects,
+  coords = c("transect_lon", "transect_lat"),
+  crs = 3035
+)
+
+m_coord_sf_wgs <- sf::st_transform(m_coord_sf, 4326)
 
 #11. Get Barcelona boundary ####
 
@@ -372,13 +306,6 @@ m_coord_sf_wgs$in_buffer <- st_within(
 
 sites_buffer <- m_coord_sf_wgs[m_coord_sf_wgs$in_buffer,]
 
-cat("\n==== Sites inside 60-km Barcelona buffer ====\n")
-
-sites_buffer %>%
-  st_drop_geometry() %>%
-  count(source, context) %>%
-  print()
-
 
 #14. Load GHSL rasters ####
 
@@ -409,7 +336,7 @@ pts_etrs <- st_transform(sites_buffer,25831)
 
 results_df <- sites_buffer %>%
   st_drop_geometry() %>%
-  select(transect_id, source, context)
+  select(transect_id,context)
 
 buffers <- c(1000,2000,5000)
 
@@ -431,7 +358,6 @@ for(r in buffers){
 built_up_df <- results_df %>%
   rename(
     SITE_ID = transect_id,
-    SOURCE = source,
     CONTEXT = context,
     built1000 = BUILT_UP_1000m,
     built2000 = BUILT_UP_2000m,
@@ -443,12 +369,6 @@ write.csv(
   file.path(output_dir,"data","built_up_bcn.csv"),
   row.names=FALSE
 )
-
-cat("\n==== built_up_bcn output check ====\n")
-
-built_up_df %>%
-  count(SOURCE, CONTEXT) %>%
-  print()
 
 
 #16. Prepare raster for plotting ####
@@ -631,78 +551,48 @@ ggsave(
 
 #20. Extract land cover diversity ####
 
-# Use the cached / aggregated raster consistently
-lc_raster_for_extract <- lc_raster_low_bcn
+pts_etrs <- st_transform(sites_buffer,crs(lc_raster_bcn))
 
-pts_etrs <- st_transform(
-  sites_buffer,
-  crs(lc_raster_for_extract)
-)
-
-calc_habdiv <- function(raster, geom, valid_classes = c(10, 20, 30, 40, 60)) {
+calc_habdiv <- function(raster,geom,valid_classes=c(10,20,30,40,60)){
   
-  cover_tab <- exactextractr::exact_extract(
-    raster,
-    geom,
-    function(values, coverage_fraction) {
-      tapply(coverage_fraction, values, sum, na.rm = TRUE)
-    }
-  )
-  
-  if (is.matrix(cover_tab)) {
-    props <- cover_tab[, 1]
-    names(props) <- rownames(cover_tab)
-  } else {
-    props <- cover_tab
-  }
-  
-  if (is.null(props) || length(props) == 0) return(NA_real_)
-  
-  names_num <- suppressWarnings(as.numeric(names(props)))
-  props <- props[names_num %in% valid_classes]
-  
-  if (length(props) == 0 || all(is.na(props)) || sum(props, na.rm = TRUE) == 0) {
-    return(0)
-  }
-  
-  props <- props / sum(props, na.rm = TRUE)
-  
-  vegan::diversity(props, index = "shannon")
-}
-
-for (r in buffers) {
-  
-  buf_etrs <- st_buffer(pts_etrs, dist = r)
-  
-  habdiv_vals <- sapply(seq_len(nrow(buf_etrs)), function(i) {
-    calc_habdiv(lc_raster_for_extract, buf_etrs[i, ])
+  cover_tab <- exact_extract(raster,geom,function(values,coverage_fraction){
+    tapply(coverage_fraction,values,sum,na.rm=TRUE)
   })
   
-  sites_buffer[[paste0("landdiv_", r, "m")]] <- habdiv_vals
+  if(is.matrix(cover_tab)){
+    props<-cover_tab[,1]
+    names(props)<-rownames(cover_tab)
+  }else{
+    props<-cover_tab
+  }
+  
+  names_num <- as.numeric(names(props))
+  props <- props[names_num %in% valid_classes]
+  props <- props/sum(props)
+  
+  if(length(props)==0 || all(is.na(props))) return(0)
+  
+  vegan::diversity(props,index="shannon")
+}
+
+for(r in buffers){
+  
+  buf_etrs <- st_buffer(pts_etrs,dist=r)
+  buf_wgs  <- st_transform(buf_etrs,crs(lc_raster_bcn))
+  
+  habdiv_vals <- sapply(1:nrow(buf_wgs),function(i){
+    calc_habdiv(lc_raster_bcn,buf_wgs[i,])
+  })
+  
+  sites_buffer[[paste0("landdiv_",r,"m")]] <- habdiv_vals
 }
 
 landdiv_df <- sites_buffer %>%
   st_drop_geometry() %>%
-  select(transect_id, source, context, starts_with("landdiv_")) %>%
-  rename(
-    SITE_ID = transect_id,
-    SOURCE = source,
-    CONTEXT = context,
-    landdiv1000 = landdiv_1000m,
-    landdiv2000 = landdiv_2000m,
-    landdiv5000 = landdiv_5000m
-  )
+  select(transect_id,context,starts_with("landdiv_"))
 
 write.csv(
   landdiv_df,
-  file.path(output_dir, "data", "land_diversity_bcn.csv"),
-  row.names = FALSE
+  file.path(output_dir,"data","land_diversity_bcn.csv"),
+  row.names=FALSE
 )
-
-
-cat("\n==== land_diversity_bcn output check ====\n")
-
-landdiv_df %>%
-  count(SOURCE, CONTEXT) %>%
-  print()
-
