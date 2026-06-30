@@ -39,8 +39,6 @@
 library(dplyr)
 library(tidyr)
 library(purrr)
-library(lavaan)
-library(lavaanPlot)
 library(lme4)
 library(lmerTest)
 library(ggeffects)
@@ -144,28 +142,6 @@ join_region_data <- function(ds_region, landscape_region, region) {
   out <- ds_region %>%
     left_join(landscape_region, by = "SITE_ID")
   
-  message("\n---- ", region, " merge check ----")
-  message("Sites in diversity/stability data: ", n_distinct(ds_region$SITE_ID))
-  message("Sites after join: ", n_distinct(out$SITE_ID))
-  message("Sites without urban_context: ", sum(is.na(out$urban_context)))
-  
-  if (region == "BCN") {
-    
-    message(
-      "uBMS in diversity/stability data: ",
-      ds_region %>%
-        filter(grepl("^ES_uBMS", SITE_ID)) %>%
-        nrow()
-    )
-    
-    message(
-      "uBMS after join with urban_context: ",
-      out %>%
-        filter(grepl("^ES_uBMS", SITE_ID), !is.na(urban_context)) %>%
-        nrow()
-    )
-  }
-  
   out %>%
     filter(!is.na(urban_context))
 }
@@ -225,24 +201,8 @@ landscape <- list(
 )
 
 
-#7. Diagnostic checks before merging ####
 
-message("\n==== BCN landscape check ====")
-
-landscape$BCN %>%
-  mutate(is_ubms = grepl("^ES_uBMS", SITE_ID)) %>%
-  count(is_ubms, urban_context) %>%
-  print()
-
-message("\n==== BCN diversity/stability check ====")
-
-ds$BCN %>%
-  mutate(is_ubms = grepl("^ES_uBMS", SITE_ID)) %>%
-  count(is_ubms) %>%
-  print()
-
-
-#8. Merge diversity–stability and landscape data ####
+#7. Merge diversity–stability and landscape data ####
 
 results <- list(
   
@@ -254,41 +214,7 @@ results <- list(
 )
 
 
-#9. Final check after merging ####
-
-all_cities_check <- bind_rows(
-  mutate(results$BCN, city = "BCN"),
-  mutate(results$LND, city = "LND"),
-  mutate(results$RND, city = "RND")
-)
-
-all_cities_check$urban_context <- factor(
-  all_cities_check$urban_context,
-  levels = c(1, 0),
-  labels = c("Urban", "Rural")
-)
-
-message("\n==== Final urban/rural counts ====")
-print(table(all_cities_check$city, all_cities_check$urban_context))
-
-
-#10. Warning check for incomplete built-up data in BCN uBMS ####
-
-missing_built_bcn <- results$BCN %>%
-  filter(grepl("^ES_uBMS", SITE_ID)) %>%
-  summarise(
-    n_ubms = n(),
-    missing_built1000 = sum(is.na(built1000)),
-    missing_built2000 = sum(is.na(built2000)),
-    missing_built5000 = sum(is.na(built5000))
-  )
-
-message("\n==== Missing built-up values for BCN uBMS ====")
-print(missing_built_bcn)
-
-
-
-#11. Spatially corrected GLMs using dbMEM ####
+#8. Spatially corrected GLMs using dbMEM ####
 
 # -------------------------------------------------------------------------
 # This section fits the 12 GLMs requested by the reviewer:
@@ -315,7 +241,7 @@ print(missing_built_bcn)
 # -------------------------------------------------------------------------
 
 
-#11.1 Settings ####
+#8.1 Settings ####
 
 response_vars <- c(
   "community_stability",
@@ -344,7 +270,7 @@ dir.create(
 )
 
 
-#11.2 Prepare GLM dataset before adding coordinates ####
+#8.2 Prepare GLM dataset before adding coordinates ####
 
 all_cities_no_coords <- all_cities_check %>%
   mutate(
@@ -354,7 +280,7 @@ all_cities_no_coords <- all_cities_check %>%
   )
 
 
-#11.3 Load coordinates from eBMS and uBMS ####
+#8.3 Load coordinates from eBMS and uBMS ####
 
 # ---- eBMS coordinates: UK, NL and BCN-CBMS ----
 # transect_lon / transect_lat are already projected coordinates.
@@ -445,7 +371,7 @@ site_coords <- bind_rows(
   distinct(city, SITE_ID, .keep_all = TRUE)
 
 
-#11.4 Check coordinate merge ####
+#8.4 Check coordinate merge ####
 
 missing_coord_sites <- all_cities_no_coords %>%
   distinct(city, SITE_ID, urban_context) %>%
@@ -462,6 +388,29 @@ all_cities <- all_cities_no_coords %>%
   select(-any_of(c("longitude", "latitude", "x_3035", "y_3035", "x_dbmem", "y_dbmem"))) %>%
   left_join(site_coords, by = c("city", "SITE_ID"))
 
+
+# Standardize response and biodiversity variables within city
+vars_to_standardize <- c(
+  "community_stability",
+  "species_asynchrony",
+  "wm_population_stability",
+  "species_richness",
+  "shannon_diversity",
+  "FDis",
+  "MPD"
+)
+
+all_cities <- all_cities %>%
+  group_by(city) %>%
+  mutate(
+    across(
+      all_of(vars_to_standardize),
+      ~ as.numeric(scale(.))
+    )
+  ) %>%
+  ungroup()
+
+
 message("\n==== Final GLM/dbMEM dataset check ====")
 
 all_cities %>%
@@ -471,7 +420,24 @@ all_cities %>%
   print(n = 100)
 
 
-#11.5 Helper: jitter duplicated coordinates ####
+message("\n==== Standardization check within city ====")
+
+all_cities %>%
+  group_by(city) %>%
+  summarise(
+    across(
+      all_of(vars_to_standardize),
+      list(
+        mean = ~ round(mean(.x, na.rm = TRUE), 6),
+        sd = ~ round(sd(.x, na.rm = TRUE), 6)
+      )
+    ),
+    .groups = "drop"
+  ) %>%
+  tibble::as_tibble() %>%
+  print(n = 100)
+
+#8.5 Helper: jitter duplicated coordinates ####
 
 jitter_duplicate_coords <- function(
     df,
@@ -494,7 +460,7 @@ jitter_duplicate_coords <- function(
 }
 
 
-#11.6 Helper: compute dbMEMs by city ####
+#8.6 Helper: compute dbMEMs by city ####
 
 compute_group_dbmem <- function(
     df,
@@ -574,7 +540,7 @@ compute_group_dbmem <- function(
 }
 
 
-#11.7 Helper: Moran's I by city × urban_context ####
+#8.7 Helper: Moran's I by city × urban_context ####
 
 test_moran_groups <- function(
     df,
@@ -689,7 +655,7 @@ test_moran_groups <- function(
 }
 
 
-#11.8 Helper: fit one dbMEM-corrected model ####
+#8.8 Helper: fit one dbMEM-corrected model ####
 
 fit_one_dbmem_model <- function(
     data,
@@ -929,7 +895,7 @@ fit_one_dbmem_model <- function(
 }
 
 
-#11.9 Run the 12 models ####
+#8.9 Run the 12 models ####
 
 glm_dbmem_fits <- tidyr::expand_grid(
   response = response_vars,
@@ -952,7 +918,7 @@ glm_dbmem_fits <- tidyr::expand_grid(
   )
 
 
-#11.10 Extract and save results ####
+#8.10 Extract and save results ####
 
 glm_dbmem_summary <- purrr::map_dfr(
   glm_dbmem_fits$fit,
@@ -1084,9 +1050,9 @@ message("Moran's I assessed by city × urban_context.")
 message("Saved outputs in output/results/")
 
 
-#12. Standardized pooled diversity–stability plots using dbMEM model predictions ####
+#9. Standardized pooled diversity–stability plots using dbMEM model predictions ####
 
-#12.1 Dataset
+#9.1 Dataset
 
 dir.create(
   file.path(output_dir, "figures"),
@@ -1098,14 +1064,14 @@ all_cities_std_pooled <- all_cities %>%
   filter(!is.na(urban_context))
 
 
-#12.2 Plot settings
+#9.2 Plot settings
 
 plot_colors <- c(
   "Urban" = "#D55E00",
   "Rural" = "#0072B2"
 )
 
-#12.3 Helper: extract fitted model object
+#9.3 Helper: extract fitted model object
 
 get_dbmem_fit <- function(response_name, diversity_name) {
   
@@ -1128,7 +1094,7 @@ get_dbmem_fit <- function(response_name, diversity_name) {
   fit_obj[[1]]
 }
 
-#12.4 Helper: city-averaged predictions from dbMEM model
+#9.4 Helper: city-averaged predictions from dbMEM model
 
 predict_city_average <- function(fit_object, diversity, n_points = 100) {
   
@@ -1228,7 +1194,7 @@ predict_city_average <- function(fit_object, diversity, n_points = 100) {
   pred_out
 }
 
-#12.5 Helper: one panel with dbMEM model predictions
+#9.5 Helper: one panel with dbMEM model predictions
 
 make_std_modelpred_panel <- function(
     data,
@@ -1381,7 +1347,7 @@ make_std_modelpred_panel <- function(
 }
 
 
-#12.6 Generate panels
+#9.6 Generate panels
 
 # Row 1: Community stability
 
@@ -1510,7 +1476,7 @@ p_ps_mpd <- make_std_modelpred_panel(
 )
 
 
-#12.7 Combine figure
+#9.7 Combine figure
 
 std_modelpred_3x4_plot <- (
   (p_cs_sr | p_cs_sd | p_cs_fd | p_cs_mpd) /
@@ -1532,7 +1498,7 @@ std_modelpred_3x4_plot <- (
 std_modelpred_3x4_plot
 
 
-#12.8 Save figure
+#9.8 Save figure
 
 ggsave(
   filename = file.path(
@@ -1548,7 +1514,7 @@ ggsave(
 )
 
 
-#13 Supplementary region-specific raw relationships ####
+#10 Supplementary region-specific raw relationships ####
 
 library(ggplot2)
 library(dplyr)
