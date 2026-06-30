@@ -286,164 +286,9 @@ missing_built_bcn <- results$BCN %>%
 message("\n==== Missing built-up values for BCN uBMS ====")
 print(missing_built_bcn)
 
-#11. Standardize SEM variables ####
-
-sem_vars <- c(
-  "community_stability",
-  "species_asynchrony",
-  "wm_population_stability",
-  "shannon_diversity",
-  "FDis",
-  "MPD",
-  "species_richness",
-  "built1000","built2000","built5000",
-  "landdiv1000","landdiv2000","landdiv5000"
-)
-
-results <- map(
-  results,
-  \(df) df %>%
-    mutate(
-      across(
-        where(is.numeric) & !matches("urban_context"),
-        ~ as.numeric(scale(.))
-      )
-    )
-)
-
-#12. SEM specification ####
-
-sem_template <- function(buffer) {
-  
-  paste0('
-  community_stability ~ species_asynchrony + wm_population_stability
-
-  species_asynchrony ~ shannon_diversity + FDis + MPD + species_richness
-  wm_population_stability ~ shannon_diversity + FDis + MPD + species_richness
-
-  shannon_diversity ~ species_richness + built', buffer, ' + landdiv', buffer, '
-  MPD ~ species_richness + built', buffer, ' + landdiv', buffer, '
-  FDis ~ species_richness + built', buffer, ' + landdiv', buffer, '
-
-  species_richness ~ built', buffer, ' + landdiv', buffer, ' + urban_context
-
-  built', buffer, ' ~ urban_context
-  landdiv', buffer, ' ~ urban_context
-
-  species_asynchrony ~~ wm_population_stability
-  built', buffer, ' ~~ landdiv', buffer, '
-  MPD ~~ FDis
-  MPD ~~ shannon_diversity
-  FDis ~~ shannon_diversity
-
-  species_asynchrony ~~ urban_context
-  wm_population_stability ~~ urban_context
-  community_stability ~~ urban_context
-  ')
-}
-
-buffers <- c(1000, 2000, 5000)
 
 
-#13. Run SEMs ####
-
-sem_results <- expand.grid(
-  region = names(results),
-  buffer = buffers
-) %>%
-  mutate(
-    model = map2(region, buffer, function(r, b) {
-      
-      df <- results[[r]]
-      
-      built_var  <- paste0("built", b)
-      landdiv_var <- paste0("landdiv", b)
-      
-      required_vars <- c(
-        "community_stability",
-        "species_asynchrony",
-        "wm_population_stability",
-        "shannon_diversity",
-        "FDis",
-        "MPD",
-        "species_richness",
-        "urban_context",
-        built_var,
-        landdiv_var
-      )
-      
-      if (!all(required_vars %in% names(df))) {
-        message("Skipping SEM: ", r, " – buffer ", b)
-        return(NULL)
-      }
-      
-      sem(
-        sem_template(b),
-        data = df,
-        missing = "fiml",
-        em.h1.iter.max = 10000
-      )
-      
-    })
-  ) %>%
-  filter(!map_lgl(model, is.null)) %>%
-  mutate(
-    summary = map(
-      model,
-      ~ summary(.x,
-                standardized = TRUE,
-                fit.measures = TRUE)
-    )
-  )
-
-
-#14. Extract SEM path coefficients ####
-
-sem_paths <- sem_results %>%
-  mutate(
-    paths = map(
-      model,
-      ~ parameterEstimates(.x, standardized = TRUE) %>%
-        filter(op == "~")
-    )
-  ) %>%
-  dplyr::select(region, buffer, paths) %>%
-  unnest(paths)
-
-
-write.csv(
-  sem_paths,
-  file.path(output_dir,"results","SEM_paths_all_regions_buffers.csv"),
-  row.names = FALSE
-)
-
-# ---- Note on SEM figure visualization ----
-# The SEM path diagrams presented in the manuscript were generated from the
-# standardized path coefficients obtained here. For clarity and graphical
-# consistency, the final diagrams shown in the figures were subsequently
-# assembled and edited using an external image editor.
-
-
-#15. Prepare data for GLMs ####
-
-all_cities <- bind_rows(
-  mutate(results$BCN, city = "BCN"),
-  mutate(results$LND, city = "LND"),
-  mutate(results$RND, city = "RND")
-)
-
-all_cities$city <- factor(
-  all_cities$city,
-  levels = c("LND","RND","BCN")
-)
-
-all_cities$urban_context <- factor(
-  all_cities$urban_context,
-  levels = c(1,0),
-  labels = c("Urban","Rural")
-)
-
-#16. Spatially corrected GLMs using dbMEM ####
+#11. Spatially corrected GLMs using dbMEM ####
 
 # -------------------------------------------------------------------------
 # This section fits the 12 GLMs requested by the reviewer:
@@ -470,7 +315,7 @@ all_cities$urban_context <- factor(
 # -------------------------------------------------------------------------
 
 
-#16.1 Settings ####
+#11.1 Settings ####
 
 response_vars <- c(
   "community_stability",
@@ -499,7 +344,7 @@ dir.create(
 )
 
 
-#16.2 Prepare GLM dataset before adding coordinates ####
+#11.2 Prepare GLM dataset before adding coordinates ####
 
 all_cities_no_coords <- all_cities_check %>%
   mutate(
@@ -509,7 +354,7 @@ all_cities_no_coords <- all_cities_check %>%
   )
 
 
-#16.3 Load coordinates from eBMS and uBMS ####
+#11.3 Load coordinates from eBMS and uBMS ####
 
 # ---- eBMS coordinates: UK, NL and BCN-CBMS ----
 # transect_lon / transect_lat are already projected coordinates.
@@ -600,7 +445,7 @@ site_coords <- bind_rows(
   distinct(city, SITE_ID, .keep_all = TRUE)
 
 
-#16.4 Check coordinate merge ####
+#11.4 Check coordinate merge ####
 
 missing_coord_sites <- all_cities_no_coords %>%
   distinct(city, SITE_ID, urban_context) %>%
@@ -626,7 +471,7 @@ all_cities %>%
   print(n = 100)
 
 
-#16.5 Helper: jitter duplicated coordinates ####
+#11.5 Helper: jitter duplicated coordinates ####
 
 jitter_duplicate_coords <- function(
     df,
@@ -649,7 +494,7 @@ jitter_duplicate_coords <- function(
 }
 
 
-#16.6 Helper: compute dbMEMs by city ####
+#11.6 Helper: compute dbMEMs by city ####
 
 compute_group_dbmem <- function(
     df,
@@ -729,7 +574,7 @@ compute_group_dbmem <- function(
 }
 
 
-#16.7 Helper: Moran's I by city × urban_context ####
+#11.7 Helper: Moran's I by city × urban_context ####
 
 test_moran_groups <- function(
     df,
@@ -844,7 +689,7 @@ test_moran_groups <- function(
 }
 
 
-#16.8 Helper: fit one dbMEM-corrected model ####
+#11.8 Helper: fit one dbMEM-corrected model ####
 
 fit_one_dbmem_model <- function(
     data,
@@ -1084,7 +929,7 @@ fit_one_dbmem_model <- function(
 }
 
 
-#16.9 Run the 12 models ####
+#11.9 Run the 12 models ####
 
 glm_dbmem_fits <- tidyr::expand_grid(
   response = response_vars,
@@ -1107,7 +952,7 @@ glm_dbmem_fits <- tidyr::expand_grid(
   )
 
 
-#16.10 Extract and save results ####
+#11.10 Extract and save results ####
 
 glm_dbmem_summary <- purrr::map_dfr(
   glm_dbmem_fits$fit,
@@ -1239,14 +1084,9 @@ message("Moran's I assessed by city × urban_context.")
 message("Saved outputs in output/results/")
 
 
-#17. Standardized pooled diversity–stability plots using dbMEM model predictions ####
+#12. Standardized pooled diversity–stability plots using dbMEM model predictions ####
 
-library(ggplot2)
-library(dplyr)
-library(purrr)
-library(patchwork)
-library(tibble)
-library(stringr)
+#12.1 Dataset
 
 dir.create(
   file.path(output_dir, "figures"),
@@ -1254,25 +1094,18 @@ dir.create(
   showWarnings = FALSE
 )
 
-# -------------------------------------------------------------------------
-# Dataset
-# -------------------------------------------------------------------------
-
 all_cities_std_pooled <- all_cities %>%
   filter(!is.na(urban_context))
 
-# -------------------------------------------------------------------------
-# Plot settings
-# -------------------------------------------------------------------------
+
+#12.2 Plot settings
 
 plot_colors <- c(
   "Urban" = "#D55E00",
   "Rural" = "#0072B2"
 )
 
-# -------------------------------------------------------------------------
-# Helper: extract fitted model object
-# -------------------------------------------------------------------------
+#12.3 Helper: extract fitted model object
 
 get_dbmem_fit <- function(response_name, diversity_name) {
   
@@ -1295,9 +1128,7 @@ get_dbmem_fit <- function(response_name, diversity_name) {
   fit_obj[[1]]
 }
 
-# -------------------------------------------------------------------------
-# Helper: city-averaged predictions from dbMEM model
-# -------------------------------------------------------------------------
+#12.4 Helper: city-averaged predictions from dbMEM model
 
 predict_city_average <- function(fit_object, diversity, n_points = 100) {
   
@@ -1397,9 +1228,7 @@ predict_city_average <- function(fit_object, diversity, n_points = 100) {
   pred_out
 }
 
-# -------------------------------------------------------------------------
-# Helper: one panel with dbMEM model predictions
-# -------------------------------------------------------------------------
+#12.5 Helper: one panel with dbMEM model predictions
 
 make_std_modelpred_panel <- function(
     data,
@@ -1551,9 +1380,8 @@ make_std_modelpred_panel <- function(
   p
 }
 
-# -------------------------------------------------------------------------
-# Generate panels
-# -------------------------------------------------------------------------
+
+#12.6 Generate panels
 
 # Row 1: Community stability
 
@@ -1681,9 +1509,8 @@ p_ps_mpd <- make_std_modelpred_panel(
   show_y_axis = FALSE
 )
 
-# -------------------------------------------------------------------------
-# Combine figure
-# -------------------------------------------------------------------------
+
+#12.7 Combine figure
 
 std_modelpred_3x4_plot <- (
   (p_cs_sr | p_cs_sd | p_cs_fd | p_cs_mpd) /
@@ -1704,9 +1531,8 @@ std_modelpred_3x4_plot <- (
 
 std_modelpred_3x4_plot
 
-# -------------------------------------------------------------------------
-# Save figure
-# -------------------------------------------------------------------------
+
+#12.8 Save figure
 
 ggsave(
   filename = file.path(
@@ -1722,7 +1548,7 @@ ggsave(
 )
 
 
-#18. Supplementary region-specific raw relationships ####
+#13 Supplementary region-specific raw relationships ####
 
 library(ggplot2)
 library(dplyr)
