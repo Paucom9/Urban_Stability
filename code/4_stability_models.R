@@ -917,8 +917,314 @@ glm_dbmem_fits <- tidyr::expand_grid(
     )
   )
 
+#8.10 Context-specific simple slopes ####
 
-#8.10 Extract and save results ####
+# -------------------------------------------------------------------------
+# This section estimates diversity–stability slopes separately for
+# Urban and Rural sites using the final dbMEM-corrected models.
+#
+# Interpretation:
+# - The diversity × urban_context interaction tests whether Urban and Rural
+#   slopes differ from each other.
+# - These simple slopes test whether the diversity–stability relationship
+#   is significantly different from zero within Urban and Rural sites.
+# -------------------------------------------------------------------------
+
+
+# ---- Significance code ----
+
+sig_code <- function(p) {
+  dplyr::case_when(
+    is.na(p) ~ NA_character_,
+    p < 0.01 ~ "***",
+    p < 0.05 ~ "**",
+    p < 0.1  ~ "*",
+    TRUE ~ "ns"
+  )
+}
+
+
+# ---- Helper: extract simple slopes from one model ----
+
+get_context_slopes <- function(response, diversity, fit) {
+  
+  mod <- fit$model
+  
+  em <- emmeans::emtrends(
+    mod,
+    specs = "urban_context",
+    var = diversity
+  )
+  
+  out <- summary(
+    em,
+    infer = c(TRUE, TRUE)
+  ) %>%
+    tibble::as_tibble()
+  
+  # emtrends creates a column named, for example:
+  # shannon_diversity.trend, species_richness.trend, etc.
+  trend_col <- grep("\\.trend$", names(out), value = TRUE)
+  
+  if (length(trend_col) != 1) {
+    stop(
+      "Could not identify trend column for model: ",
+      response,
+      " ~ ",
+      diversity
+    )
+  }
+  
+  out %>%
+    transmute(
+      response = .env$response,
+      diversity = .env$diversity,
+      urban_context = urban_context,
+      slope = .data[[trend_col]],
+      std.error = SE,
+      df = df,
+      conf.low = lower.CL,
+      conf.high = upper.CL,
+      statistic = t.ratio,
+      p.value = p.value,
+      sig = sig_code(p.value)
+    )
+}
+
+
+# ---- Calculate simple slopes for all dbMEM models ----
+
+glm_dbmem_simple_slopes <- glm_dbmem_fits %>%
+  transmute(
+    slopes = purrr::pmap(
+      list(response, diversity, fit),
+      get_context_slopes
+    )
+  ) %>%
+  tidyr::unnest(slopes) %>%
+  left_join(
+    glm_dbmem_summary %>%
+      select(
+        response,
+        diversity,
+        n_dbmem,
+        moran_corrected,
+        n_significant_positive_moran
+      ),
+    by = c("response", "diversity")
+  )
+
+
+# ---- Wide version for easier inspection ----
+
+glm_dbmem_simple_slopes_wide <- glm_dbmem_simple_slopes %>%
+  select(
+    response,
+    diversity,
+    urban_context,
+    slope,
+    std.error,
+    p.value,
+    sig
+  ) %>%
+  mutate(
+    urban_context = as.character(urban_context)
+  ) %>%
+  tidyr::pivot_wider(
+    names_from = urban_context,
+    values_from = c(
+      slope,
+      std.error,
+      p.value,
+      sig
+    ),
+    names_glue = "{.value}_{urban_context}"
+  )
+
+
+# ---- Print results ----
+
+message("\n==== Context-specific simple slopes ====")
+
+glm_dbmem_simple_slopes %>%
+  mutate(
+    slope = round(slope, 4),
+    std.error = round(std.error, 4),
+    conf.low = round(conf.low, 4),
+    conf.high = round(conf.high, 4),
+    statistic = round(statistic, 3),
+    p.value = signif(p.value, 3)
+  ) %>%
+  arrange(response, diversity, urban_context) %>%
+  print(n = 100)
+
+
+message("\n==== Context-specific simple slopes, wide format ====")
+
+glm_dbmem_simple_slopes_wide %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ signif(.x, 3)
+    )
+  ) %>%
+  arrange(response, diversity) %>%
+  print(n = 100)
+
+#8.11 ANOVA-style tables for dbMEM models ####
+
+# -------------------------------------------------------------------------
+# This section creates ANOVA-style tables for the dbMEM-corrected GLMs.
+# It reports Df, Sum Sq, Mean Sq, F value and p-value for the focal terms.
+#
+# Because the models include interactions and dbMEM spatial filters, we use
+# Type III tests from car::Anova after refitting models with sum contrasts.
+# dbMEM terms are included in the models but not reported individually,
+# because they are spatial filters rather than ecological predictors.
+# -------------------------------------------------------------------------
+
+library(car)
+
+format_p <- function(p) {
+  dplyr::case_when(
+    is.na(p) ~ "",
+    p < 0.001 ~ "<0.001",
+    TRUE ~ sprintf("%.3f", p)
+  )
+}
+
+bold_sig <- function(x, p) {
+  ifelse(
+    !is.na(p) & p < 0.05,
+    paste0("**", x, "**"),
+    x
+  )
+}
+
+get_anova_dbmem <- function(response, diversity, fit) {
+  
+  mod_formula <- formula(fit$model)
+  model_data  <- fit$data
+  
+  # Refit with sum contrasts for type III tests
+  mod_refit <- lm(
+    mod_formula,
+    data = model_data,
+    contrasts = list(
+      urban_context = contr.sum,
+      city = contr.sum
+    )
+  )
+  
+  anova_tbl <- car::Anova(
+    mod_refit,
+    type = 3
+  ) %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("term_raw") %>%
+    tibble::as_tibble()
+  
+  interaction_term <- paste0(diversity, ":urban_context")
+  
+  out <- anova_tbl %>%
+    filter(
+      term_raw %in% c(
+        diversity,
+        "urban_context",
+        "city",
+        interaction_term
+      )
+    ) %>%
+    mutate(
+      response = response,
+      diversity = diversity,
+      term = case_when(
+        term_raw == diversity ~ diversity,
+        term_raw == "urban_context" ~ "Urban context",
+        term_raw == "city" ~ "Study system",
+        term_raw == interaction_term ~ paste0(diversity, " × urban context"),
+        TRUE ~ term_raw
+      ),
+      Df = Df,
+      Sum_Sq = `Sum Sq`,
+      Mean_Sq = `Sum Sq` / Df,
+      F_value = `F value`,
+      p_value = `Pr(>F)`
+    ) %>%
+    select(
+      response,
+      diversity,
+      term,
+      Df,
+      Sum_Sq,
+      Mean_Sq,
+      F_value,
+      p_value
+    )
+  
+  resid_df <- df.residual(mod_refit)
+  resid_ss <- sum(residuals(mod_refit)^2)
+  resid_ms <- resid_ss / resid_df
+  
+  resid_row <- tibble(
+    response = response,
+    diversity = diversity,
+    term = "Residuals",
+    Df = resid_df,
+    Sum_Sq = resid_ss,
+    Mean_Sq = resid_ms,
+    F_value = NA_real_,
+    p_value = NA_real_
+  )
+  
+  bind_rows(out, resid_row)
+}
+
+glm_dbmem_anova_tables <- glm_dbmem_fits %>%
+  mutate(
+    anova = purrr::pmap(
+      list(response, diversity, fit),
+      get_anova_dbmem
+    )
+  ) %>%
+  select(anova) %>%
+  tidyr::unnest(anova) %>%
+  left_join(
+    glm_dbmem_summary %>%
+      select(
+        response,
+        diversity,
+        n_dbmem,
+        n_obs,
+        r.squared,
+        adj.r.squared,
+        moran_corrected,
+        min_moran_p
+      ),
+    by = c("response", "diversity")
+  )
+
+message("\n==== ANOVA-style tables for dbMEM models ====")
+
+glm_dbmem_anova_tables %>%
+  mutate(
+    Sum_Sq = round(Sum_Sq, 3),
+    Mean_Sq = round(Mean_Sq, 3),
+    F_value = round(F_value, 3),
+    p_value = format_p(p_value)
+  ) %>%
+  arrange(response, diversity, match(term, c(
+    diversity,
+    "Urban context",
+    "Study system",
+    paste0(diversity, " × urban context"),
+    "Residuals"
+  ))) %>%
+  print(n = 200)
+
+
+
+#8.12 Extract and save results ####
 
 glm_dbmem_summary <- purrr::map_dfr(
   glm_dbmem_fits$fit,
@@ -1036,6 +1342,36 @@ write.csv(
 write.csv(
   glm_dbmem_moran,
   file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_moran_by_group.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  glm_dbmem_simple_slopes,
+  file.path(
+    output_dir,
+    "results",
+    "GLM_dbMEM_by_city_simple_slopes_by_context.csv"
+  ),
+  row.names = FALSE
+)
+
+write.csv(
+  glm_dbmem_simple_slopes_wide,
+  file.path(
+    output_dir,
+    "results",
+    "GLM_dbMEM_by_city_simple_slopes_by_context_wide.csv"
+  ),
+  row.names = FALSE
+)
+
+write.csv(
+  glm_dbmem_anova_tables,
+  file.path(
+    output_dir,
+    "results",
+    "GLM_dbMEM_by_city_ANOVA_style_tables.csv"
+  ),
   row.names = FALSE
 )
 
