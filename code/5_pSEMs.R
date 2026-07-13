@@ -1,23 +1,12 @@
 # ============================================================================ #
-# Piecewise SEMs for BCN / LND / RND
-# Data loading + regional standardization + sequentially residualized diversity metrics
-# MEM-only spatial correction + no urban_context in the pSEM
-# v11: treats species_richness as an endogenous response to landscape structure
-#      but fits the richness equation with spatial GLS instead of MEMs:
-#      gls(species_richness ~ built_buffer + landdiv_buffer, corExp)
-#      Other component equations use MEM-only spatial correction as before.
-#      Minimum covariance structure: built_buffer %~~% landdiv_buffer and
-#      species_asynchrony %~~% wm_population_stability
-# pSEM for 1000, 2000, 5000 m
+#   5_pSEMs.R                                                                  #
+#   Author: Pau Colom                                                          #
+#                                                                              #
+#   It runs spatially corrected piecewise structural equation models for       #
+#   London, Randstad, and Barcelona at 1-, 2-, and 5-km landscape buffers      # 
+#                                                                              #
 # ============================================================================ #
 
-# --------------------------------------------------------------------------- #
-# 0. Clean session
-# --------------------------------------------------------------------------- #
-
-rm(list = ls())
-gc()
-graphics.off()
 
 # --------------------------------------------------------------------------- #
 # 1. Libraries
