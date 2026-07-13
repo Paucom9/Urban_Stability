@@ -2109,7 +2109,7 @@ panel_grid <- wrap_plots(
   widths = c(1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1)
 )
 
-fig_s18_raw_region_relationships <- 
+fig_s6_raw_region_relationships <- 
   cowplot::ggdraw(legend_only) /
   header_row /
   panel_grid +
@@ -2117,15 +2117,15 @@ fig_s18_raw_region_relationships <-
     heights = c(0.35, 0.25, 6)
   )
 
-fig_s18_raw_region_relationships
+fig_s6_raw_region_relationships
 
 ggsave(
   filename = file.path(
     output_dir,
     "figures",
-    "Fig_SM.png"
+    "Fig_S6.png"
   ),
-  plot = fig_s18_raw_region_relationships,
+  plot = fig_s6_raw_region_relationships,
   width = 16,
   height = 8,
   dpi = 600,
