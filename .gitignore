@@ -24,3 +24,5 @@ input/
 
 # Cache
 .cache/
+input.zip
+output.zip

@@ -494,4 +494,5 @@ These boundaries were used exclusively to classify monitoring transects into urb
 
 BMS data and annual abundance indices are not publicly available in this repository
 Access requires a signed data-sharing agreement with the European Butterfly Monitoring Scheme (eBMS)                              
-Data requests can be submitted through: https://butterfly-monitoring.net/     
+Data requests can be submitted through: https://butterfly-monitoring.net/
+
