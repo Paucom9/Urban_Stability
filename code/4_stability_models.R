@@ -3,11 +3,8 @@
 #   Author: Pau Colom                                                          #
 #                                                                              #
 #   This script analyses diversity–stability relationships across the          #
-#   three study regions (Barcelona, London, Randstad).                         #
-#   It fits structural equation models (SEMs) to evaluate the mechanisms       #
-#   linking landscape structure, biodiversity, and community stability         #
-#   across spatial buffers. It also fits GLMs to test interactions between     #
-#   biodiversity metrics and urban context across cities.                      #
+#   three study regions (Barcelona, London, Randstad). It fits LMs to test    #
+#   interactions between biodiversity metrics and urban context across cities  #
 #                                                                              #
 #   Input:                                                                     #
 #   - Diversity and stability metrics                                          #
@@ -24,12 +21,12 @@
 #         output/data/land_diversity_lnd.csv                                   #
 #         output/data/land_diversity_rnd.csv                                   #
 #                                                                              #
-#   Output:                                                                    #
-#   - SEM path coefficients                                                    #
-#         output/data/SEM_paths_all_regions_buffers.csv                        #
-#                                                                              #
-#   - GLM interaction results                                                  #
-#         output/data/GLM_diversity_stability_interactions.csv                 #
+#   Output:
+#   - Model results and diagnostics saved in:
+#         output/results/LMs
+#
+#   - Figures saved in:
+#         output/figures/
 # ============================================================================ #
 
 
@@ -52,7 +49,10 @@ library(sf)
 library(adespatial)
 library(spdep)
 library(tibble)
-
+library(car)
+library(cowplot)
+library(scales)
+library(extrafont)
 
 #2. Define project folders ####
 
@@ -214,10 +214,10 @@ results <- list(
 )
 
 
-#8. Spatially corrected GLMs using dbMEM ####
+#8. Spatially corrected LMs using dbMEM ####
 
 # -------------------------------------------------------------------------
-# This section fits the 12 GLMs requested by the reviewer:
+# This section fits the 12 LMs requested by the reviewer:
 #   3 responses:
 #     - community_stability
 #     - species_asynchrony
@@ -270,13 +270,23 @@ dir.create(
 )
 
 
-#8.2 Prepare GLM dataset before adding coordinates ####
+#8.2 Prepare LMs dataset before adding coordinates ####
+
+all_cities_check <- bind_rows(
+  BCN = results$BCN,
+  LND = results$LND,
+  RND = results$RND,
+  .id = "city"
+)
 
 all_cities_no_coords <- all_cities_check %>%
   mutate(
     SITE_ID = stringr::str_trim(as.character(SITE_ID)),
     city = factor(city, levels = c("LND", "RND", "BCN")),
-    urban_context = factor(urban_context, levels = c("Urban", "Rural"))
+    urban_context = factor(
+      if_else(urban_context == 1, "Urban", "Rural"),
+      levels = c("Urban", "Rural")
+    )
   )
 
 
@@ -411,7 +421,7 @@ all_cities <- all_cities %>%
   ungroup()
 
 
-message("\n==== Final GLM/dbMEM dataset check ====")
+message("\n==== Final LMs/dbMEM dataset check ====")
 
 all_cities %>%
   mutate(missing_coords = is.na(x_3035) | is.na(y_3035)) %>%
@@ -897,7 +907,7 @@ fit_one_dbmem_model <- function(
 
 #8.9 Run the 12 models ####
 
-glm_dbmem_fits <- tidyr::expand_grid(
+LMs_dbmem_fits <- tidyr::expand_grid(
   response = response_vars,
   diversity = biodiv_vars
 ) %>%
@@ -916,6 +926,11 @@ glm_dbmem_fits <- tidyr::expand_grid(
       )
     )
   )
+
+LMs_dbmem_summary <- purrr::map_dfr(
+  LMs_dbmem_fits$fit,
+  \(x) x$summary
+)
 
 #8.10 Context-specific simple slopes ####
 
@@ -994,7 +1009,7 @@ get_context_slopes <- function(response, diversity, fit) {
 
 # ---- Calculate simple slopes for all dbMEM models ----
 
-glm_dbmem_simple_slopes <- glm_dbmem_fits %>%
+LMs_dbmem_simple_slopes <- LMs_dbmem_fits %>%
   transmute(
     slopes = purrr::pmap(
       list(response, diversity, fit),
@@ -1003,7 +1018,7 @@ glm_dbmem_simple_slopes <- glm_dbmem_fits %>%
   ) %>%
   tidyr::unnest(slopes) %>%
   left_join(
-    glm_dbmem_summary %>%
+    LMs_dbmem_summary %>%
       select(
         response,
         diversity,
@@ -1017,7 +1032,7 @@ glm_dbmem_simple_slopes <- glm_dbmem_fits %>%
 
 # ---- Wide version for easier inspection ----
 
-glm_dbmem_simple_slopes_wide <- glm_dbmem_simple_slopes %>%
+LMs_dbmem_simple_slopes_wide <- LMs_dbmem_simple_slopes %>%
   select(
     response,
     diversity,
@@ -1046,7 +1061,7 @@ glm_dbmem_simple_slopes_wide <- glm_dbmem_simple_slopes %>%
 
 message("\n==== Context-specific simple slopes ====")
 
-glm_dbmem_simple_slopes %>%
+LMs_dbmem_simple_slopes %>%
   mutate(
     slope = round(slope, 4),
     std.error = round(std.error, 4),
@@ -1061,7 +1076,7 @@ glm_dbmem_simple_slopes %>%
 
 message("\n==== Context-specific simple slopes, wide format ====")
 
-glm_dbmem_simple_slopes_wide %>%
+LMs_dbmem_simple_slopes_wide %>%
   mutate(
     across(
       where(is.numeric),
@@ -1074,7 +1089,7 @@ glm_dbmem_simple_slopes_wide %>%
 #8.11 ANOVA-style tables for dbMEM models ####
 
 # -------------------------------------------------------------------------
-# This section creates ANOVA-style tables for the dbMEM-corrected GLMs.
+# This section creates ANOVA-style tables for the dbMEM-corrected LMs.
 # It reports Df, Sum Sq, Mean Sq, F value and p-value for the focal terms.
 #
 # Because the models include interactions and dbMEM spatial filters, we use
@@ -1083,7 +1098,6 @@ glm_dbmem_simple_slopes_wide %>%
 # because they are spatial filters rather than ecological predictors.
 # -------------------------------------------------------------------------
 
-library(car)
 
 format_p <- function(p) {
   dplyr::case_when(
@@ -1180,7 +1194,7 @@ get_anova_dbmem <- function(response, diversity, fit) {
   bind_rows(out, resid_row)
 }
 
-glm_dbmem_anova_tables <- glm_dbmem_fits %>%
+LMs_dbmem_anova_tables <- LMs_dbmem_fits %>%
   mutate(
     anova = purrr::pmap(
       list(response, diversity, fit),
@@ -1190,7 +1204,7 @@ glm_dbmem_anova_tables <- glm_dbmem_fits %>%
   select(anova) %>%
   tidyr::unnest(anova) %>%
   left_join(
-    glm_dbmem_summary %>%
+    LMs_dbmem_summary %>%
       select(
         response,
         diversity,
@@ -1206,7 +1220,7 @@ glm_dbmem_anova_tables <- glm_dbmem_fits %>%
 
 message("\n==== ANOVA-style tables for dbMEM models ====")
 
-glm_dbmem_anova_tables %>%
+LMs_dbmem_anova_tables %>%
   mutate(
     Sum_Sq = round(Sum_Sq, 3),
     Mean_Sq = round(Mean_Sq, 3),
@@ -1226,17 +1240,13 @@ glm_dbmem_anova_tables %>%
 
 #8.12 Extract and save results ####
 
-glm_dbmem_summary <- purrr::map_dfr(
-  glm_dbmem_fits$fit,
-  \(x) x$summary
-)
 
-glm_dbmem_coefficients <- purrr::map_dfr(
-  glm_dbmem_fits$fit,
+LMs_dbmem_coefficients <- purrr::map_dfr(
+  LMs_dbmem_fits$fit,
   \(x) x$coefficients
 ) %>%
   left_join(
-    glm_dbmem_summary %>%
+    LMs_dbmem_summary %>%
       select(
         response,
         diversity,
@@ -1247,20 +1257,20 @@ glm_dbmem_coefficients <- purrr::map_dfr(
     by = c("response", "diversity")
   )
 
-glm_dbmem_focal_terms <- glm_dbmem_coefficients %>%
+LMs_dbmem_focal_terms <- LMs_dbmem_coefficients %>%
   filter(!is_spatial_filter)
 
-glm_dbmem_focal_terms_corrected <- glm_dbmem_focal_terms %>%
+LMs_dbmem_focal_terms_corrected <- LMs_dbmem_focal_terms %>%
   filter(moran_corrected)
 
-glm_dbmem_interactions_corrected <- glm_dbmem_focal_terms_corrected %>%
+LMs_dbmem_interactions_corrected <- LMs_dbmem_focal_terms_corrected %>%
   filter(stringr::str_detect(term, ":urban_context")) %>%
   mutate(
     significant = p.value < 0.05
   )
 
-glm_dbmem_moran <- purrr::map_dfr(
-  glm_dbmem_fits$fit,
+LMs_dbmem_moran <- purrr::map_dfr(
+  LMs_dbmem_fits$fit,
   \(x) x$moran
 )
 
@@ -1269,7 +1279,7 @@ glm_dbmem_moran <- purrr::map_dfr(
 
 message("\n==== Final dbMEM model summary ====")
 
-glm_dbmem_summary %>%
+LMs_dbmem_summary %>%
   select(
     response,
     diversity,
@@ -1284,7 +1294,7 @@ glm_dbmem_summary %>%
 
 message("\n==== Final dbMEM interaction results ====")
 
-glm_dbmem_interactions_corrected %>%
+LMs_dbmem_interactions_corrected %>%
   select(
     response,
     diversity,
@@ -1309,78 +1319,79 @@ glm_dbmem_interactions_corrected %>%
 
 # ---- Save outputs ----
 
+
 write.csv(
-  glm_dbmem_coefficients,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_coefficients_all_terms.csv"),
+  LMs_dbmem_coefficients,
+  file.path(output_dir, "results", "LMs", "LMs_dbMEM_by_city_diversity_stability_coefficients_all_terms.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_focal_terms,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_focal_terms.csv"),
+  LMs_dbmem_focal_terms,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_diversity_stability_focal_terms.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_focal_terms_corrected,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_focal_terms_only_moran_corrected.csv"),
+  LMs_dbmem_focal_terms_corrected,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_focal_terms_only_moran_corrected.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_interactions_corrected,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_interactions_only_moran_corrected.csv"),
+  LMs_dbmem_interactions_corrected,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_interactions_only_moran_corrected.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_summary,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_model_summary.csv"),
+  LMs_dbmem_summary,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_diversity_stability_model_summary.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_moran,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_moran_by_group.csv"),
+  LMs_dbmem_moran,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_diversity_stability_moran_by_group.csv"),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_simple_slopes,
+  LMs_dbmem_simple_slopes,
   file.path(
     output_dir,
-    "results",
-    "GLM_dbMEM_by_city_simple_slopes_by_context.csv"
+    "results","LMs",
+    "LMs_dbMEM_by_city_simple_slopes_by_context.csv"
   ),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_simple_slopes_wide,
+  LMs_dbmem_simple_slopes_wide,
   file.path(
     output_dir,
-    "results",
-    "GLM_dbMEM_by_city_simple_slopes_by_context_wide.csv"
+    "results","LMs",
+    "LMs_dbMEM_by_city_simple_slopes_by_context_wide.csv"
   ),
   row.names = FALSE
 )
 
 write.csv(
-  glm_dbmem_anova_tables,
+  LMs_dbmem_anova_tables,
   file.path(
     output_dir,
-    "results",
-    "GLM_dbMEM_by_city_ANOVA_style_tables.csv"
+    "results", "LMs",
+    "LMs_dbMEM_by_city_ANOVA_style_tables.csv"
   ),
   row.names = FALSE
 )
 
 saveRDS(
-  glm_dbmem_fits,
-  file.path(output_dir, "results", "GLM_dbMEM_by_city_diversity_stability_model_objects.rds")
+  LMs_dbmem_fits,
+  file.path(output_dir, "results","LMs", "LMs_dbMEM_by_city_diversity_stability_model_objects.rds")
 )
 
-message("\n==== dbMEM GLM analysis complete ====")
+message("\n==== dbMEM LMs analysis complete ====")
 message("Spatial filters calculated by city.")
 message("Moran's I assessed by city × urban_context.")
 message("Saved outputs in output/results/")
@@ -1411,7 +1422,7 @@ plot_colors <- c(
 
 get_dbmem_fit <- function(response_name, diversity_name) {
   
-  fit_obj <- glm_dbmem_fits %>%
+  fit_obj <- LMs_dbmem_fits %>%
     filter(
       .data$response == .env$response_name,
       .data$diversity == .env$diversity_name
@@ -1840,7 +1851,7 @@ ggsave(
   filename = file.path(
     output_dir,
     "figures",
-    "fig_standardized_modelpred_3stability_x_4diversity.png"
+    "Fig_3.png"
   ),
   plot = std_modelpred_3x4_plot,
   width = 8,
@@ -1852,17 +1863,15 @@ ggsave(
 
 #10 Supplementary region-specific raw relationships ####
 
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(patchwork)
-library(cowplot)
 
 dir.create(
   file.path(output_dir, "figures"),
   recursive = TRUE,
   showWarnings = FALSE
 )
+
+
+#10.1 Variables and plot settings ####
 
 plot_colors <- c(
   "Urban" = "#D55E00",
@@ -1897,13 +1906,28 @@ diversity_labels <- c(
 
 city_levels <- c("LND", "RND", "BCN")
 
-# RAW VALUES
-plot_data_s18 <- all_cities_check %>%
+
+#10.2 Prepare raw data ####
+
+# all_cities_no_coords contains the original, non-standardized ecological
+# variables and the correctly coded Urban/Rural context.
+
+plot_data_s18 <- all_cities_no_coords %>%
   select(
     city,
     urban_context,
     all_of(stability_vars),
     all_of(diversity_vars)
+  ) %>%
+  mutate(
+    city = factor(
+      as.character(city),
+      levels = city_levels
+    ),
+    urban_context = factor(
+      as.character(urban_context),
+      levels = c("Urban", "Rural")
+    )
   ) %>%
   pivot_longer(
     cols = all_of(stability_vars),
@@ -1915,10 +1939,6 @@ plot_data_s18 <- all_cities_check %>%
     names_to = "diversity_metric",
     values_to = "diversity_value"
   ) %>%
-  mutate(
-    city = factor(city, levels = city_levels),
-    urban_context = factor(urban_context, levels = c("Urban", "Rural"))
-  ) %>%
   filter(
     !is.na(stability_value),
     !is.na(diversity_value),
@@ -1926,17 +1946,55 @@ plot_data_s18 <- all_cities_check %>%
     !is.na(urban_context)
   )
 
-make_s18_panel <- function(stab, div, city_i, show_y, show_x, show_title) {
+
+# Check that data and both contexts are present
+
+if (nrow(plot_data_s18) == 0) {
+  stop(
+    "plot_data_s18 is empty. Check all_cities_no_coords and urban_context."
+  )
+}
+
+if (n_distinct(plot_data_s18$urban_context) < 2) {
+  warning(
+    "Only one urban_context level is present in plot_data_s18."
+  )
+}
+
+message("\n==== Raw region-specific plot data ====")
+
+plot_data_s18 %>%
+  distinct(city, urban_context, diversity_metric, stability_metric) %>%
+  count(city, urban_context) %>%
+  print(n = 100)
+
+
+#10.3 Helper: create one panel ####
+
+make_s18_panel <- function(
+    stab,
+    div,
+    city_i,
+    show_y = FALSE,
+    show_x = FALSE
+) {
   
-  df <- plot_data_s18 %>%
+  df_panel <- plot_data_s18 %>%
     filter(
       stability_metric == stab,
       diversity_metric == div,
       city == city_i
     )
   
+  if (nrow(df_panel) == 0) {
+    warning(
+      "No data for panel: ",
+      stab, " × ", div, " × ", city_i
+    )
+  }
+  
   ggplot(
-    df,
+    df_panel,
     aes(
       x = diversity_value,
       y = stability_value,
@@ -1946,24 +2004,32 @@ make_s18_panel <- function(stab, div, city_i, show_y, show_x, show_title) {
   ) +
     geom_point(
       alpha = 0.18,
-      size = 0.45
+      size = 0.45,
+      na.rm = TRUE
     ) +
     geom_smooth(
       method = "lm",
+      formula = y ~ x,
       se = TRUE,
       linewidth = 0.7,
-      alpha = 0.14
+      alpha = 0.14,
+      na.rm = TRUE
     ) +
-    scale_color_manual(values = plot_colors) +
-    scale_fill_manual(values = plot_colors) +
+    scale_color_manual(
+      values = plot_colors,
+      drop = FALSE
+    ) +
+    scale_fill_manual(
+      values = plot_colors,
+      drop = FALSE
+    ) +
     scale_x_continuous(
-      breaks = scales::breaks_width(2)
+      breaks = scales::breaks_pretty(n = 3)
     ) +
     scale_y_continuous(
-      breaks = scales::breaks_width(2)
+      breaks = scales::breaks_pretty(n = 3)
     ) +
     labs(
-      title = if (show_title) as.character(city_i) else NULL,
       x = if (show_x) diversity_labels[[div]] else NULL,
       y = if (show_y) stability_labels[[stab]] else NULL
     ) +
@@ -1979,36 +2045,49 @@ make_s18_panel <- function(stab, div, city_i, show_y, show_x, show_title) {
       ),
       axis.line = element_blank(),
       
-      plot.title = element_text(
-        family = "Garamond",
-        size = 16,
-        hjust = 0.5,
-        margin = margin(b = 4)
-      ),
+      axis.title.x = if (show_x) {
+        element_text(
+          family = "Garamond",
+          size = 15,
+          margin = margin(t = 6)
+        )
+      } else {
+        element_blank()
+      },
       
-      axis.title.x = element_text(
-        family = "Garamond",
-        size = 15,
-        margin = margin(t = 6)
-      ),
-      axis.title.y = element_text(
-        family = "Garamond",
-        size = 15,
-        margin = margin(r = 6)
-      ),
+      axis.title.y = if (show_y) {
+        element_text(
+          family = "Garamond",
+          size = 15,
+          margin = margin(r = 6)
+        )
+      } else {
+        element_blank()
+      },
       
       axis.text = element_text(
         family = "Garamond",
         size = 10
       ),
-      axis.ticks = element_line(linewidth = 0.25),
+      
+      axis.ticks = element_line(
+        linewidth = 0.25
+      ),
       
       legend.position = "none",
-      plot.margin = margin(2, 2, 2, 2)
+      plot.margin = margin(
+        t = 2,
+        r = 2,
+        b = 2,
+        l = 2
+      )
     )
 }
 
-make_header_plot <- function(label = NULL) {
+
+#10.4 Helpers: headers and spacing ####
+
+make_header_plot <- function(label) {
   
   ggplot() +
     annotate(
@@ -2025,48 +2104,77 @@ make_header_plot <- function(label = NULL) {
     )
 }
 
+
 make_empty_plot <- function() {
-  ggplot() + theme_void()
+  
+  ggplot() +
+    theme_void() +
+    theme(
+      plot.margin = margin(0, 0, 0, 0)
+    )
 }
 
-# Header row: city names below legend
+
+#10.5 Create city header row ####
+
 header_list <- list()
 
 for (div in diversity_vars) {
+  
   for (city_i in city_levels) {
-    header_list[[length(header_list) + 1]] <- make_header_plot(city_i)
+    
+    header_list[[length(header_list) + 1]] <-
+      make_header_plot(city_i)
   }
+  
   if (div != diversity_vars[length(diversity_vars)]) {
-    header_list[[length(header_list) + 1]] <- make_empty_plot()
+    
+    header_list[[length(header_list) + 1]] <-
+      make_empty_plot()
   }
 }
 
-# Main panels with spacer columns between diversity metrics
+
+#10.6 Create all panels ####
+
 panel_list <- list()
 
-for (stab_i in seq_along(stability_vars)) {
-  
-  stab <- stability_vars[stab_i]
+for (stab in stability_vars) {
   
   for (div in diversity_vars) {
     
     for (city_i in city_levels) {
       
-      panel_list[[length(panel_list) + 1]] <- make_s18_panel(
-        stab = stab,
-        div = div,
-        city_i = city_i,
-        show_y = div == diversity_vars[1] & city_i == city_levels[1],
-        show_x = stab == stability_vars[length(stability_vars)] & city_i == "RND",
-        show_title = FALSE
-      )
+      panel_list[[length(panel_list) + 1]] <-
+        make_s18_panel(
+          stab = stab,
+          div = div,
+          city_i = city_i,
+          
+          # Show one y-axis title per row
+          show_y = (
+            div == diversity_vars[1] &&
+              city_i == city_levels[1]
+          ),
+          
+          # Place each diversity title below the central city
+          show_x = (
+            stab == stability_vars[length(stability_vars)] &&
+              city_i == "RND"
+          )
+        )
     }
     
     if (div != diversity_vars[length(diversity_vars)]) {
-      panel_list[[length(panel_list) + 1]] <- make_empty_plot()
+      
+      panel_list[[length(panel_list) + 1]] <-
+        make_empty_plot()
     }
   }
 }
+
+
+#10.7 Create shared legend ####
 
 legend_plot <- ggplot(
   plot_data_s18,
@@ -2079,13 +2187,31 @@ legend_plot <- ggplot(
 ) +
   geom_smooth(
     method = "lm",
+    formula = y ~ x,
     se = TRUE,
     linewidth = 0.7,
     alpha = 0.14
   ) +
-  scale_color_manual(values = plot_colors) +
-  scale_fill_manual(values = plot_colors) +
-  theme_void(base_family = "Garamond") +
+  scale_color_manual(
+    values = plot_colors,
+    drop = FALSE
+  ) +
+  scale_fill_manual(
+    values = plot_colors,
+    drop = FALSE
+  ) +
+  guides(
+    color = guide_legend(
+      override.aes = list(
+        linewidth = 1,
+        alpha = 1
+      )
+    ),
+    fill = "none"
+  ) +
+  theme_void(
+    base_family = "Garamond"
+  ) +
   theme(
     legend.position = "top",
     legend.title = element_blank(),
@@ -2097,27 +2223,45 @@ legend_plot <- ggplot(
 
 legend_only <- cowplot::get_legend(legend_plot)
 
-header_row <- wrap_plots(
+if (is.null(legend_only)) {
+  stop("The shared legend could not be created.")
+}
+
+
+#10.8 Assemble figure ####
+
+column_widths <- c(
+  1, 1, 1, 0.25,
+  1, 1, 1, 0.25,
+  1, 1, 1, 0.25,
+  1, 1, 1
+)
+
+header_row <- patchwork::wrap_plots(
   header_list,
   ncol = 15,
-  widths = c(1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1)
+  widths = column_widths
 )
 
-panel_grid <- wrap_plots(
+panel_grid <- patchwork::wrap_plots(
   panel_list,
   ncol = 15,
-  widths = c(1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1, 0.25, 1, 1, 1)
+  widths = column_widths
 )
 
-fig_s6_raw_region_relationships <- 
+fig_s6_raw_region_relationships <- (
   cowplot::ggdraw(legend_only) /
-  header_row /
-  panel_grid +
-  plot_layout(
+    header_row /
+    panel_grid
+) +
+  patchwork::plot_layout(
     heights = c(0.35, 0.25, 6)
   )
 
 fig_s6_raw_region_relationships
+
+
+#10.9 Save figure ####
 
 ggsave(
   filename = file.path(

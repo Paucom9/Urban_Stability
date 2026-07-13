@@ -29,6 +29,7 @@ Urban_Stability
 │   ├── 2_annual_abundance_indices.R
 │   ├── 3_diversity_stability_metrics.R
 │   └── 4_stability_models.R
+│   └── 5_pSEMSs.R
 │
 ├── input/
 │   ├── city_boundaries/
@@ -40,6 +41,8 @@ Urban_Stability
 │   ├── data/
 │   ├── figures/
 │   └── results/
+│       ├── LMs/
+│       └── SEMs/
 │
 ├── Urban_Stability.Rproj
 ├── .gitignore
@@ -145,27 +148,66 @@ Purpose
 Test the effect of biodiversity and urbanization on community stability.
 
 Analyses performed
-Linear models relating diversity and stability
-Generalized linear models testing the effect of urban context
-Structural Equation Models (SEM) evaluating causal pathways linking:
-Urbanization
-Biodiversity
-Species asynchrony
-Population stability
-Community stability
+Linear models relating biodiversity to community stability, species asynchrony and population stability
+Biodiversity × urban context interactions controlling for study region
+Spatial correction using city-specific dbMEM spatial filters
+Residual spatial autocorrelation tests using Moran's I
+Urban- and rural-specific diversity–stability slopes
+Type III ANOVA tests for the main model terms
+Model-based pooled predictions and region-specific raw relationships
 
 Input
 output/data/diversity_stability_bcn.csv
 output/data/diversity_stability_lnd.csv
 output/data/diversity_stability_rnd.csv
+output/data/built_up_bcn.csv
+output/data/built_up_lnd.csv
+output/data/built_up_rnd.csv
+output/data/land_diversity_bcn.csv
+output/data/land_diversity_lnd.csv
+output/data/land_diversity_rnd.csv
+input/data/ebms_transect_coord.csv
+input/data/ubms_sites.csv
 
 Output
-output/results/GLM_diversity_stability_context.csv
-output/results/SEM_paths_all_regions_buffers.csv
+Model summaries, Moran's I diagnostics and fitted model objects are saved in:
+output/results/LMs
 
 Figures produced
-output/figures/fig_diversity_stability_context.png
-output/figures/fig_diversity_stability_context_region.png
+output/figures/Fig_3.png
+output/figures/Fig_S6.png
+
+-------------------------------------------------------------------------------------------------------------
+
+  #5_pSEMs.R
+
+Purpose
+Evaluate landscape–biodiversity–stability pathways using spatially corrected piecewise structural equation 
+models for Barcelona, London and the Randstad.
+
+Analyses performed
+Piecewise structural equation models fitted separately for each study region
+Models repeated using landscape variables calculated within 1000 m, 2000 m and 5000 m buffers
+Spatial correction using dbMEM spatial filters, with spatial GLS used for the species-richness equation
+Model assessment using Fisher's C, d-separation tests, R² and AIC
+Comparison of path coefficients across regions and spatial buffers
+
+Input
+output/data/diversity_stability_bcn.csv
+output/data/diversity_stability_lnd.csv
+output/data/diversity_stability_rnd.csv
+output/data/built_up_bcn.csv
+output/data/built_up_lnd.csv
+output/data/built_up_rnd.csv
+output/data/land_diversity_bcn.csv
+output/data/land_diversity_lnd.csv
+output/data/land_diversity_rnd.csv
+input/data/ebms_transect_coord.csv
+input/data/ubms_sites.csv
+
+Output
+Path coefficients, model-fit statistics, Moran's I diagnostics and fitted model objects are saved in:
+output/results/SEMs/
 
 -------------------------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------

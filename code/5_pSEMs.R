@@ -31,7 +31,7 @@ library(nlme)
 input_dir   <- here("input", "data")
 output_dir  <- here("output")
 data_dir    <- file.path(output_dir, "data")
-results_dir <- file.path(output_dir, "results", "pSEM_piecewise_all_regions_MEM_noUrbanContext_richnessEndogenous_GLSrichness_v11c")
+results_dir <- file.path(output_dir, "results", "SEMs")
 
 dir.create(
   results_dir,
@@ -47,7 +47,7 @@ k_neigh     <- 8
 alpha_moran <- 0.05
 max_select  <- 90
 
-# v11 setting: use GLS spatial correlation for the species richness equation.
+# use GLS spatial correlation for the species richness equation.
 # This is intended to avoid over-parameterizing the Randstad richness equation
 # with many MEMs while still modelling the ecological path BS/LD -> SR.
 use_gls_for_richness <- TRUE
@@ -403,8 +403,7 @@ diagnose_psem_complete_cases <- function(df_input, region, buffer, results_dir) 
     message("Dropped sites by urban_context:")
     print(
       dropped_sites %>%
-        dplyr::count(region, buffer, urban_context, name = "n_dropped"),
-      n = 100
+        dplyr::count(region, buffer, urban_context, name = "n_dropped")
     )
     
     utils::write.csv(
@@ -2067,5 +2066,5 @@ print(psem_key_paths, n = 300)
 message("\n================ MAIN PATHS ACROSS BUFFERS ================")
 print(psem_main_paths_wide, n = 300)
 
-message("\n==== All-region pSEM analysis complete: richness endogenous with GLS richness v11 ====")
+message("\n==== All-region pSEM analysis complete ====")
 message("Outputs saved in: ", results_dir)
