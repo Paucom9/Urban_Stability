@@ -2068,3 +2068,190 @@ print(psem_main_paths_wide, n = 300)
 
 message("\n==== All-region pSEM analysis complete ====")
 message("Outputs saved in: ", results_dir)
+
+# --------------------------------------------------------------------------- #
+# 15. Supplementary analysis: one original diversity metric per SEM (all regions, 2 km)
+# --------------------------------------------------------------------------- #
+# Run after sections 1-14. Reuses their functions and the exact main-model sites in each region,
+# standardized responses/landscape variables, coordinates and candidate dbMEMs.
+# Original diversity metrics come from sem_resid[[region]]: these original columns
+# are standardized but NOT residualized (the *_resid columns are not used).
+# MEM selection is repeated for every equation, including each diversity model.
+# For richness, retain the main script's GLS setting and fitting helper.
+# These models describe individual diversity facets, not their unique effects
+# after accounting for the other facets. Do not rank them using AIC because
+# their endogenous diversity responses differ.
+# The ecological graph is saturated: all three regressions include BS and LD,
+# and both remaining variable pairs have covariance terms. Thus there are no
+# ecological d-separation claims; global ecological fit is not testable.
+
+# Check all main models before starting supplementary fits.
+if (!exists("psem_results") || !exists("sem_resid")) {
+  stop("Run main-script sections 1-14 in this session before this supplement.")
+}
+regions <- c("LND", "RND", "BCN")
+for (region in regions) {
+  main_data <- psem_results[[region]][["2000"]]$data
+  if (is.null(main_data) || nrow(main_data) == 0) {
+    stop("Missing main 2000-m SEM data for ", region,
+         ". Run main-script sections 1-14 first.")
+  }
+  if (!all(c(0, 1) %in% main_data$urban_context)) {
+    stop("Main 2000-m SEM for ", region,
+         " does not contain both urban and rural sites. Check input joins and rerun main models.")
+  }
+  message(region, ": ", nrow(main_data), " sites; urban = ",
+          sum(main_data$urban_context == 1), "; rural = ",
+          sum(main_data$urban_context == 0))
+}
+
+supp_dir <- file.path(results_dir, "supplementary_single_diversity_2000")
+dir.create(supp_dir, recursive = TRUE, showWarnings = FALSE)
+supp_metrics <- c("species_richness", "shannon_diversity", "FDis", "MPD")
+
+run_single_diversity_supp <- function(region, metric, df, max_select, k_neigh,
+                                      alpha, use_gls_for_richness,
+                                      small_n_mem_fraction = 0.25,
+                                      min_resid_df = 8) {
+  stopifnot(metric %in% supp_metrics)
+  message("\n==== Supplementary ", region, " 2000-m SEM: ", metric, " ====")
+  env_terms <- c("built_buffer", "landdiv_buffer")
+  eqs <- list(
+    species_asynchrony = c(metric, env_terms),
+    wm_population_stability = c(metric, env_terms)
+  )
+  eqs[[metric]] <- env_terms
+  mem_candidates <- names(df)[grepl("^MEM", names(df))]
+  listw <- make_listw(df, k = k_neigh, coords = c("x_dbmem", "y_dbmem"))
+  models <- list()
+  selections <- list()
+  moran <- list()
+  spatial_eqs <- list()
+  
+  # Stable data references let piecewiseSEM re-evaluate component model calls.
+  data_name <- paste0(".supp_", region, "_2000_", metric)
+  assign(data_name, df, envir = .GlobalEnv)
+  for (resp in names(eqs)) {
+    preds <- eqs[[resp]]
+    before <- moran_lm(df, resp, preds, listw)
+    use_gls <- identical(resp, "species_richness") && use_gls_for_richness
+    if (use_gls) {
+      extra <- character(0)
+      mod <- fit_richness_gls(df = df, predictors = preds)
+      spatial_method <- if (inherits(mod, "gls")) "GLS_corExp" else "lm_fallback"
+      selection <- tibble(response = resp, selected_mems = "", n_mems = 0,
+                          max_mems_allowed = 0, spatial_method = spatial_method)
+    } else {
+      cap <- max(0, min(max_select, floor(nrow(df) * small_n_mem_fraction),
+                        nrow(df) - 1 - length(preds) - min_resid_df,
+                        length(mem_candidates)))
+      selection <- select_mems_for_equation(
+        df, resp, preds, mem_candidates, listw, alpha = alpha, max_select = cap
+      ) %>% mutate(max_mems_allowed = cap, spatial_method = "MEM")
+      extra <- split_mem_string(selection$selected_mems)
+      mod <- lm(make_formula(resp, c(preds, extra)), data = df)
+    }
+    spatial_eqs[[resp]] <- c(preds, extra)
+    fixed_formula <- make_formula(resp, spatial_eqs[[resp]], env = .GlobalEnv)
+    if (inherits(mod, "gls")) {
+      mod$call$model <- fixed_formula
+    } else {
+      mod$call$formula <- fixed_formula
+    }
+    mod$call$data <- as.name(data_name)
+    models[[resp]] <- mod
+    after <- moran_model_residuals(mod, listw, response = resp)
+    selections[[resp]] <- selection
+    moran[[resp]] <- bind_rows(mutate(before, stage = "before"),
+                               mutate(after, stage = "after"))
+    if (is.na(after$moran_p) || after$moran_p < alpha) {
+      warning("Unresolved/undefined Moran test for ", metric, " -> ", resp)
+    }
+  }
+  
+  sem_fit <- piecewiseSEM::psem(
+    models$species_asynchrony, models$wm_population_stability, models[[metric]],
+    species_asynchrony %~~% wm_population_stability,
+    built_buffer %~~% landdiv_buffer, data = df
+  )
+  coefs <- extract_component_path_coefs(
+    models, df, region, 2000, "built2000", "landdiv2000"
+  ) %>% mutate(diversity_metric = metric, .before = 1)
+  r2 <- tibble(
+    region = region, diversity_metric = metric, response = names(models),
+    R2 = vapply(models, function(mod) {
+      if (inherits(mod, "lm")) summary(mod)$r.squared else NA_real_
+    }, numeric(1)),
+    model_class = vapply(models, function(mod) class(mod)[1], character(1))
+  )
+  # GLS R2 is supplied by piecewiseSEM when supported; NA above is intentional.
+  r2_piecewise <- tryCatch(
+    piecewiseSEM::rsquared(sem_fit) %>% clean_empty_names() %>%
+      mutate(region = region, diversity_metric = metric, .before = 1),
+    error = function(e) tibble(region = region, diversity_metric = metric, error = e$message)
+  )
+  list(psem = sem_fit, models = models, eqs = eqs, eqs_spatial = spatial_eqs,
+       data = df, coefs = coefs,
+       ecological_coefs = filter(coefs, !grepl("^MEM", Predictor)),
+       r2 = r2, r2_piecewise = r2_piecewise,
+       mem_selection = bind_rows(selections) %>%
+         mutate(region = region, diversity_metric = metric, .before = 1),
+       moran = bind_rows(moran) %>%
+         mutate(region = region, diversity_metric = metric, .before = 1))
+}
+
+supp_results <- list()
+for (region in regions) {
+  main_fit <- psem_results[[region]][["2000"]]
+  if (is.null(main_fit)) stop("Run the main 2000-m SEM for ", region, " first.")
+  supp_data <- main_fit$data
+  supp_source <- sem_resid[[region]]
+  if (anyDuplicated(supp_data$SITE_ID) || anyDuplicated(supp_source$SITE_ID)) {
+    stop("Duplicated SITE_ID values in ", region)
+  }
+  supp_match <- match(supp_data$SITE_ID, supp_source$SITE_ID)
+  if (anyNA(supp_match)) stop("Missing main-model sites in ", region)
+  for (metric in supp_metrics) {
+    supp_data[[metric]] <- supp_source[[metric]][supp_match]
+    if (any(!is.finite(supp_data[[metric]])) || sd(supp_data[[metric]]) == 0) {
+      stop("Missing/non-finite or constant metric in ", region, ": ", metric)
+    }
+  }
+  stopifnot(identical(supp_data$SITE_ID, main_fit$data$SITE_ID))
+  write.csv(supp_data,
+            file.path(supp_dir, paste0(region, "_2000_single_diversity_input.csv")),
+            row.names = FALSE)
+  for (metric in supp_metrics) {
+    key <- paste(region, metric, sep = "_")
+    supp_results[[key]] <- run_single_diversity_supp(
+      region, metric, supp_data, max_select = max_select, k_neigh = k_neigh,
+      alpha = alpha_moran, use_gls_for_richness = use_gls_for_richness
+    )
+    saveRDS(supp_results[[key]],
+            file.path(supp_dir, paste0(region, "_2000_", metric, "_SEM.rds")))
+  }
+}
+for (item in c("coefs", "ecological_coefs", "r2", "r2_piecewise",
+               "mem_selection", "moran")) {
+  write.csv(purrr::map_dfr(supp_results, item),
+            file.path(supp_dir, paste0("AllRegions_2000_single_diversity_", item, ".csv")),
+            row.names = FALSE)
+}
+saveRDS(supp_results, file.path(supp_dir, "AllRegions_2000_single_diversity_all_SEMs.rds"))
+writeLines(c(
+  "Four single-diversity SEMs per region (LND, RND, BCN), at 2000 m.",
+  "Within each region, sites match the main 2000-m model exactly.",
+  "Original standardized diversity metrics; no residualized predictors.",
+  "Ecological graph saturated: ecological Fisher C/df/p are not informative.",
+  "MEM selection repeated by equation; inspect exported Moran diagnostics.",
+  "Richness uses the main script's use_gls_for_richness setting.",
+  "Do not compare AIC across different endogenous diversity responses.",
+  "R2 for lm is ordinary R-squared; GLS R2 is in r2_piecewise when available.",
+  "When loading saved models in a fresh R session for piecewiseSEM operations,",
+  "restore the data reference for each region and metric, for example:",
+  "assign('.supp_LND_2000_FDis', supp_results$LND_FDis$data, envir = .GlobalEnv)"
+), file.path(supp_dir, "README.txt"))
+capture.output(sessionInfo(), file = file.path(supp_dir, "sessionInfo.txt"))
+message("\n==== Supplementary ecological paths ==== ")
+print(purrr::map_dfr(supp_results, "ecological_coefs"), n = Inf)
+message("Supplementary outputs saved in: ", supp_dir)

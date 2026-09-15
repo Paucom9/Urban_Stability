@@ -139,7 +139,7 @@ df_ubms_filtered <- df_ubms %>%
 
 #7. Filter CBMS sites ####
 
-df_cbms <- df_expanded_clean %>% filter(SCHEME=="CBMS")
+df_cbms <- df_expanded %>% filter(SCHEME=="CBMS")
 
 df_cbms <- df_cbms %>%
   mutate(SINDEX_std = SINDEX * 1000 / transect_length)
@@ -551,7 +551,7 @@ ggsave(
 
 #20. Extract land cover diversity ####
 
-pts_etrs <- st_transform(sites_buffer,crs(lc_raster_bcn))
+pts_etrs <- st_transform(sites_buffer,crs(lc_raster_low_bcn))
 
 calc_habdiv <- function(raster,geom,valid_classes=c(10,20,30,40,60)){
   
@@ -578,10 +578,10 @@ calc_habdiv <- function(raster,geom,valid_classes=c(10,20,30,40,60)){
 for(r in buffers){
   
   buf_etrs <- st_buffer(pts_etrs,dist=r)
-  buf_wgs  <- st_transform(buf_etrs,crs(lc_raster_bcn))
+  buf_wgs  <- st_transform(buf_etrs,crs(lc_raster_low_bcn))
   
   habdiv_vals <- sapply(1:nrow(buf_wgs),function(i){
-    calc_habdiv(lc_raster_bcn,buf_wgs[i,])
+    calc_habdiv(lc_raster_low_bcn,buf_wgs[i,])
   })
   
   sites_buffer[[paste0("landdiv_",r,"m")]] <- habdiv_vals
@@ -591,8 +591,18 @@ landdiv_df <- sites_buffer %>%
   st_drop_geometry() %>%
   select(transect_id,context,starts_with("landdiv_"))
 
+landdiv_df <- landdiv_df %>%
+  rename(
+    SITE_ID = transect_id,
+    CONTEXT = context,
+    landdiv1000 = landdiv_1000m,
+    landdiv2000 = landdiv_2000m,
+    landdiv5000 = landdiv_5000m
+  ) %>%
+  mutate(SITE_ID = trimws(SITE_ID))
+
 write.csv(
   landdiv_df,
-  file.path(output_dir,"data","land_diversity_bcn.csv"),
-  row.names=FALSE
+  file.path(output_dir, "data", "land_diversity_bcn.csv"),
+  row.names = FALSE
 )
